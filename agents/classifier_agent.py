@@ -1,25 +1,29 @@
-from state.state import IncidentState
-from models.llm import llm
-from schemas.models import IncidentClassification
+from langgraph.graph import MessagesState
+from models.llm import llm_bind_tools
+from loguru import logger
+from langchain_core.messages import SystemMessage
 
-# Configura el modelo para que devuelva una salida estructurada
-llm_structured = llm.with_structured_output(IncidentClassification)
 
-with open("prompt/classify_agent.md", "r") as f:
-    read = f.read()
+with open("prompts/classify_agent.md", "r") as f:
+    prompt = f.read()
 
-async def classify_agent(state: IncidentState):
-    user_input = state["user_input"]
 
-    full_prompt = f"""
-    {read}
-    User_incident:
-    {user_input}
-    """
+async def classify_agent(state: MessagesState):
+    try:
 
-    response = await llm_structured.ainvoke(full_prompt)
-    return {
-        "incident_category": response.category,
-        "priority": response.priority
-    }
+        messages = [
+                SystemMessage(content=prompt) + state["messages"]
+        ]
 
+        response = await llm_bind_tools.ainvoke(messages)
+        
+        return {
+            "messages": [response]
+        }
+    
+    except Exception as e:
+        logger.error(f"Error en el agente de clasificación: {e}")
+        raise ValueError("Ocurrió un error en el agente de clasificación.")
+
+
+    
