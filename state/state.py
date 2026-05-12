@@ -1,7 +1,7 @@
-from typing import TypedDict
 
+from langgraph.graph import MessagesState
 
-class IncidentState(TypedDict):
+class IncidentState(MessagesState):
     user_input: str
     incident_category: str
     priority: str
