@@ -21,11 +21,4 @@ async def get_connection():
     
     except Exception as e:
         logger.error(f"Error al conectar a la base de datos: {e}")
-        raise 
-
-
-
-
-asyncio.run(get_connection())
-
-    
+        raise
