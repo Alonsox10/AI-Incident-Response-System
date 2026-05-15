@@ -1,24 +1,22 @@
-from langgraph.graph import MessagesState
 from models.llm import llm_bind_tools
 from loguru import logger
 from langchain_core.messages import SystemMessage
+from state.state import IncidentState
 
 
-with open("prompt/classify_agent.md", "r") as f:
-    prompt = f.read()
-
-
-async def classify_agent(state: MessagesState):
+def classify_agent(state: IncidentState):
     try:
-        # Combina el mensaje del sistema con los mensajes anteriores del estado
-        messages = [SystemMessage(content=prompt)] + state["messages"]
+        with open("prompt/classify_agent.md", "r", encoding="utf-8") as f:
+            prompt = f.read()
 
-        response = await llm_bind_tools.ainvoke(messages)
-        
-        return {
-            "messages": [response]
-        }
-    
+        messages_state = [
+            SystemMessage(content=prompt),
+            *state["messages"]
+        ]
+
+        response = llm_bind_tools.invoke(messages_state)
+        return {"messages": [response]}
+
     except Exception as e:
         logger.error(f"Error en el agente de clasificación: {e}")
         raise ValueError("Ocurrió un error en el agente de clasificación.")

@@ -1,8 +1,9 @@
 
 from langgraph.graph import MessagesState
+from typing import List
 
 class IncidentState(MessagesState):
-    user_input: str
-    incident_category: str
+    category: str
     priority: str
-    diagnostic_message: list[str]
+    possible_causes: List[str]
+    recommendations: List[str]

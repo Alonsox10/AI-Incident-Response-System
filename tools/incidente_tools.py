@@ -4,22 +4,22 @@ from loguru import logger
 
 
 @tool
-async def search_incident_by_category(category: str):
+def search_incident_by_category(category: str):
     """Busca incidentes en la base de datos por categoría y devuelve hasta 5 resultados."""
     connection = None
     try:
-        connection = await get_connection()
+        connection = get_connection()
 
         query = """
         SELECT title, priority
         FROM incidents
-        WHERE category = $1
+        WHERE category = %s
         LIMIT 5
         """
 
-        result = await connection.fetch(query, category)
+        result = connection.execute(query, (category,)).fetchall()
 
-        return [{"title": row["title"], "priority": row["priority"]} for row in result]
+        return [{"title": row[0], "priority": row[1]} for row in result]
     
     except Exception as e:
         logger.error(f"Error al buscar incidentes por categoría: {e}")
@@ -27,22 +27,23 @@ async def search_incident_by_category(category: str):
     
     finally:
         if connection:
-            await connection.close()
+            connection.close()
 
 
 @tool
-async def insert_incident(title: str, category: str, priority: str):
+def insert_incident(title: str, category: str, priority: str):
     """Inserta un nuevo incidente en la base de datos con título, categoría y prioridad."""
     connection = None
     try:
-        connection = await get_connection()
+        connection = get_connection()
 
         query = """
         INSERT INTO incidents (title, category, priority)
-        VALUES ($1, $2, $3)
+        VALUES (%s, %s, %s)
         """
 
-        await connection.execute(query, title, category, priority)
+        connection.execute(query, (title, category, priority))
+        connection.commit()
     
     except Exception as e:
         logger.error(f"Error al insertar incidente: {e}")
@@ -50,6 +51,6 @@ async def insert_incident(title: str, category: str, priority: str):
     
     finally:
         if connection:
-            await connection.close()
+            connection.close()
 
     
