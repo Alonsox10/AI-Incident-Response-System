@@ -12,6 +12,32 @@ Este proyecto implementa un flujo agentic utilizando IA para:
 
 ---
 
+# 🧠 Arquitectura del Sistema
+
+El sistema utiliza una arquitectura multi-agente basada en workflows dirigidos por estado (`state-driven workflows`).
+
+## Agentes del sistema
+
+### 🔹 Orchestrator Agent
+Responsable de coordinar el flujo completo del sistema y decidir qué agente debe ejecutarse según el estado actual del workflow.
+
+### 🔹 Classifier Agent
+Clasifica incidentes y determina:
+- categoría
+- prioridad
+- posibles causas
+
+### 🔹 Recommendation Agent
+Genera recomendaciones técnicas basadas en la clasificación del incidente.
+
+### 🔹 Tools Node
+Ejecuta acciones externas:
+- búsqueda de incidentes similares
+- inserción de incidentes en PostgreSQL
+
+---
+
+
 # 🧠 Tecnologías utilizadas
 
 - Python
@@ -55,31 +81,68 @@ POSTGRES_URL=postgresql://user:password@localhost:5432/database
 
 uvicorn main:app --reload
 
-# ✨ Características principales
+# 🧩 Características
 
-✅ Clasificación automática de incidentes  
-✅ Priorización inteligente  
-✅ Recomendaciones técnicas generadas por IA  
-✅ Persistencia de memoria con PostgreSQL  
-✅ Arquitectura basada en agentes  
-✅ Tool Calling con LangGraph  
-✅ Workflow Agentic  
-✅ Sistema modular y escalable  
+- ✅ Arquitectura multi-agente
+- ✅ Orquestación dinámica
+- ✅ Structured Outputs
+- ✅ State-driven workflows
+- ✅ Tool Calling
+- ✅ Persistencia con PostgreSQL
+- ✅ Memory checkpointing
+- ✅ Routing dinámico
+- ✅ Agentes especializados
 
 ---
 
-# 🏗️ Arquitectura del sistema
+# 📂 Estructura del proyecto
 
-```text
-Usuario
-   ↓
-FastAPI API
-   ↓
-LangGraph Workflow
-   ↓
+project/
+│
+├── agents/
+│   ├── orchestrator_agent.py
+│   ├── classifier_agent.py
+│   └── recommendation_agent.py
+│
+├── graphs/
+│   ├── workflow.py
+│   └── router.py
+│
+├── prompts/
+│   ├── orchestrator.md
+│   ├── classifier_agent.md
+│   └── recommendation_agent.md
+│
+├── schemas/
+│   └── models.py
+│
+├── state/
+│   └── state.py
+│
+├── tools/
+│   └── incidente_tools.py
+│
+├── database/
+│   └── db.py
+│
+├── main.py
+├── requirements.txt
+└── README.md
+
+
+START
+↓
+Orchestrator
+↓
 Classifier Agent
-   ↓
-ToolNode
-   ↓
-PostgreSQL
+↓
+Orchestrator
+↓
+Recommendation Agent
+↓
+Orchestrator
+↓
+Tools Node
+↓
+END
 
