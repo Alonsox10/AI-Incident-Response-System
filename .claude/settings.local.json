@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"c:\\\\Users\\\\Alonso\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\\\\\" --exclude venv 2>/dev/null || dir \"c:\\\\Users\\\\Alonso\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\" /b)",
+      "Read(//c/Users/Alonso/Desktop/Certificaciones/AI-Incident-Response-System\" --exclude venv 2>/dev/null || dir c:UsersAlonsoDesktopCertificacionesAI-Incident-Response-System /**)"
+    ]
+  }
+}
