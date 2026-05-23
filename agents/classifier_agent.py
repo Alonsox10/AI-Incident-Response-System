@@ -28,9 +28,7 @@ def classifier_agent(state: IncidentState):
             "category": response.category,
             "priority": response.priority,
             "possible_causes": response.possible_causes,
-            "recommendations": None,
             "current_step": "classifier_done"
-            
         }
     except Exception as e:
         logger.error(f"Error en el agente clasificador: {e}")

@@ -12,11 +12,12 @@ def recomendation_agent(state: IncidentState):
             prompt = f.read()
 
         #Obetner informacion del state
-        input_user = state["messages"]
+        input_user = state["messages"][-1].content
 
         category = state["category"]
 
         priority = state["priority"]
+
 
         # Construir el contexto para el agente de recomendación
         context = f"""
@@ -28,6 +29,7 @@ def recomendation_agent(state: IncidentState):
 
         Prioridad:
         {priority}
+
         """
 
         message_state = [
