@@ -3,7 +3,9 @@
     "allow": [
       "Bash(ls \"c:\\\\Users\\\\Alonso\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\\\\\" --exclude venv 2>/dev/null || dir \"c:\\\\Users\\\\Alonso\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\" /b)",
       "Read(//c/Users/Alonso/Desktop/Certificaciones/AI-Incident-Response-System\" --exclude venv 2>/dev/null || dir c:UsersAlonsoDesktopCertificacionesAI-Incident-Response-System /**)",
-      "Bash(dir /s /b \"c:\\\\Users\\\\Alonso\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\")"
+      "Bash(dir /s /b \"c:\\\\Users\\\\Alonso\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\")",
+      "PowerShell(Get-Command python3 -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command py -ErrorAction SilentlyContinue)"
     ]
   }
 }
