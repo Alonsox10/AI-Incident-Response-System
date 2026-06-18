@@ -5,7 +5,10 @@
       "Read(//c/Users/Alonso/Desktop/Certificaciones/AI-Incident-Response-System\" --exclude venv 2>/dev/null || dir c:UsersAlonsoDesktopCertificacionesAI-Incident-Response-System /**)",
       "Bash(dir /s /b \"c:\\\\Users\\\\Alonso\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\")",
       "PowerShell(Get-Command python3 -ErrorAction SilentlyContinue)",
-      "PowerShell(Get-Command py -ErrorAction SilentlyContinue)"
+      "PowerShell(Get-Command py -ErrorAction SilentlyContinue)",
+      "PowerShell(psql -U postgres -c \"\\\\l\" 2>&1)",
+      "PowerShell(& \"C:\\\\Program Files\\\\PostgreSQL\\\\17\\\\bin\\\\pg_restore.exe\" -U postgres -d incident_ai -F c \"C:\\\\Users\\\\leonr\\\\OneDrive\\\\Desktop\\\\DBS\\\\Incident_ai\\\\Incident_ai.sql\" 2>&1)",
+      "PowerShell(& \"C:\\\\Program Files\\\\PostgreSQL\\\\17\\\\bin\\\\psql.exe\" -U postgres -d incident_ai -c \"\\\\dt\" 2>&1)"
     ]
   }
 }
