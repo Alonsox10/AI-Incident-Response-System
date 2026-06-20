@@ -1,9 +1,7 @@
 from loguru import logger
-from langchain_core.messages import SystemMessage , HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from models.llm import llm_bind_tools
 from state.state import IncidentState
-
-
 
 
 def recomendation_agent(state: IncidentState):
@@ -11,16 +9,19 @@ def recomendation_agent(state: IncidentState):
         with open("prompt/recomendation_agent.md", "r", encoding="utf-8") as f:
             prompt = f.read()
 
-        #Obetner informacion del state
-        input_user = state["messages"][-1].content
+        messages = state["messages"]
+        has_tool_results = any(isinstance(m, ToolMessage) for m in messages)
 
-        category = state["category"]
+        if has_tool_results:
+            # Segunda llamada: el LLM ya tiene resultados de herramientas, genera el texto final
+            message_state = [SystemMessage(content=prompt)] + list(messages)
+        else:
+            # Primera llamada: construir contexto inicial desde el estado
+            input_user = messages[-1].content
+            category = state["category"]
+            priority = state["priority"]
 
-        priority = state["priority"]
-
-
-        # Construir el contexto para el agente de recomendación
-        context = f"""
+            context = f"""
         Incidente:
         {input_user}
 
@@ -29,13 +30,11 @@ def recomendation_agent(state: IncidentState):
 
         Prioridad:
         {priority}
-
         """
-
-        message_state = [
-            SystemMessage(content=prompt),
-            HumanMessage(content=context)
-        ]
+            message_state = [
+                SystemMessage(content=prompt),
+                HumanMessage(content=context)
+            ]
 
         response = llm_bind_tools.invoke(message_state)
         print("Recomendation agent ejecutado")

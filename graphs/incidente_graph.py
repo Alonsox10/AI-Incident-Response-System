@@ -9,7 +9,16 @@ from dotenv import load_dotenv
 from agents.orchestrator_agent import orchestrator_agent
 from graphs.router import router
 from agents.classifier_agent import classifier_agent
+from langchain_core.messages import AIMessage
 import os
+
+
+def recommendation_router(state: IncidentState):
+    messages = state.get("messages", [])
+    last_message = messages[-1] if messages else None
+    if isinstance(last_message, AIMessage) and last_message.tool_calls:
+        return "tools"
+    return END
 
 load_dotenv(override=True)
 
@@ -39,8 +48,8 @@ routes = {
 }
 
 graph.add_edge("classifier", "orchestrator")
-graph.add_edge("recommendation", "tools")
-graph.add_edge("tools", END)
+graph.add_edge("tools", "recommendation")
+graph.add_conditional_edges("recommendation", recommendation_router, {"tools": "tools", END: END})
 
 
 # Agrega las transiciones condicionales al grafo utilizando la función de enrutamiento
