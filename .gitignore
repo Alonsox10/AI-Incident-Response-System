@@ -10,6 +10,3 @@ __pycache__/
 
 # VS Code
 .vscode/
-
-# PDFs de knowledge base (cada desarrollador los coloca manualmente)
-docs/knowledge/*.pdf
