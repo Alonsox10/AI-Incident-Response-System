@@ -8,7 +8,9 @@
       "PowerShell(Get-Command py -ErrorAction SilentlyContinue)",
       "PowerShell(psql -U postgres -c \"\\\\l\" 2>&1)",
       "PowerShell(& \"C:\\\\Program Files\\\\PostgreSQL\\\\17\\\\bin\\\\pg_restore.exe\" -U postgres -d incident_ai -F c \"C:\\\\Users\\\\leonr\\\\OneDrive\\\\Desktop\\\\DBS\\\\Incident_ai\\\\Incident_ai.sql\" 2>&1)",
-      "PowerShell(& \"C:\\\\Program Files\\\\PostgreSQL\\\\17\\\\bin\\\\psql.exe\" -U postgres -d incident_ai -c \"\\\\dt\" 2>&1)"
+      "PowerShell(& \"C:\\\\Program Files\\\\PostgreSQL\\\\17\\\\bin\\\\psql.exe\" -U postgres -d incident_ai -c \"\\\\dt\" 2>&1)",
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\leonr\\\\OneDrive\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\\\\docs\\\\knowledge\")",
+      "PowerShell(New-Item -ItemType File -Force \"c:\\\\Users\\\\leonr\\\\OneDrive\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\\\\docs\\\\knowledge\\\\.gitkeep\")"
     ]
   }
 }
