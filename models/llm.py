@@ -1,6 +1,7 @@
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 from tools.incidente_tools import search_incident_by_category, insert_incident
+from tools.rag_tools import search_knowledge_base_rag, search_similar_incidents_rag
 import os
 
 
@@ -12,4 +13,10 @@ if not OPENAI_API_KEY:
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-llm_bind_tools = llm.bind_tools([search_incident_by_category, insert_incident])
+# Todas las herramientas disponibles para el agente de recomendación (existentes + RAG)
+llm_bind_tools = llm.bind_tools([
+    search_incident_by_category,
+    insert_incident,
+    search_knowledge_base_rag,
+    search_similar_incidents_rag,
+])
