@@ -1,3 +1,4 @@
+import time
 from langchain_core.tools import tool
 from loguru import logger
 
@@ -13,11 +14,24 @@ def search_knowledge_base_rag(query: str) -> str:
     Úsala cuando necesites material de referencia externo.
     """
     try:
+        logger.info(f"[RAG-KB] Buscando en base de conocimiento | query='{query[:80]}'")
+        inicio = time.perf_counter()
+
         embedding = get_embedding(query)
         results = search_knowledge_base(embedding, top_k=4)
 
+        duracion = time.perf_counter() - inicio
+
         if not results:
+            logger.info(f"[RAG-KB] Sin resultados | tiempo={duracion:.2f}s")
             return "No se encontraron documentos relevantes en la base de conocimiento."
+
+        max_sim = max(r["similarity"] for r in results)
+        fuentes = list({r["source"] for r in results if r["source"]})
+        logger.info(
+            f"[RAG-KB] {len(results)} documentos encontrados | "
+            f"similitud_max={max_sim:.0%} | fuentes={fuentes} | tiempo={duracion:.2f}s"
+        )
 
         parts = []
         for i, r in enumerate(results, 1):
@@ -29,7 +43,7 @@ def search_knowledge_base_rag(query: str) -> str:
         return "\n\n---\n\n".join(parts)
 
     except Exception as e:
-        logger.error(f"Error en la búsqueda RAG de la base de conocimiento: {e}")
+        logger.error(f"[RAG-KB] Error en la búsqueda: {e}")
         return "Error al consultar la base de conocimiento."
 
 
@@ -41,11 +55,23 @@ def search_similar_incidents_rag(incident_description: str) -> str:
     y resolvieron incidentes comparables en el pasado.
     """
     try:
+        logger.info(f"[RAG-HIST] Buscando incidentes similares | query='{incident_description[:80]}'")
+        inicio = time.perf_counter()
+
         embedding = get_embedding(incident_description)
         results = search_similar_incidents(embedding, top_k=3)
 
+        duracion = time.perf_counter() - inicio
+
         if not results:
+            logger.info(f"[RAG-HIST] Sin resultados | tiempo={duracion:.2f}s")
             return "No se encontraron incidentes similares en el historial."
+
+        max_sim = max(r["similarity"] for r in results)
+        logger.info(
+            f"[RAG-HIST] {len(results)} incidentes encontrados | "
+            f"similitud_max={max_sim:.0%} | tiempo={duracion:.2f}s"
+        )
 
         parts = []
         for i, r in enumerate(results, 1):
@@ -58,5 +84,5 @@ def search_similar_incidents_rag(incident_description: str) -> str:
         return "\n\n---\n\n".join(parts)
 
     except Exception as e:
-        logger.error(f"Error en la búsqueda RAG de incidentes: {e}")
+        logger.error(f"[RAG-HIST] Error en la búsqueda: {e}")
         return "Error al buscar incidentes similares."
