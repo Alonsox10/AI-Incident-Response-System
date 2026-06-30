@@ -23,7 +23,7 @@ cd AI-Incident-Response-System
 
 ## 2. Configurar variables de entorno
 
-Crea un archivo `.env` en la raiz del proyecto:
+Crea un archivo `.env` en la raiz del proyecto con las variables obligatorias:
 
 ```env
 OPENAI_API_KEY=sk-...
@@ -31,6 +31,43 @@ POSTGRES_URL=postgresql://postgres:alonso@localhost:5432/incident_ai
 ```
 
 > En Docker el servicio usa internamente `postgresql://postgres:alonso@postgres:5432/incident_ai` (definido en `docker-compose.yml`). El `.env` es para correr la app localmente fuera de Docker.
+
+### Trazabilidad con LangSmith (opcional)
+
+LangSmith permite ver en detalle cada decision del agente: que nodo del grafo se ejecuto, que llamo cada herramienta, que recupero el RAG, cuanto tardo cada paso y cuanto costo en tokens.
+
+> **No es obligatorio.** Si estas variables no estan en el `.env`, el agente funciona exactamente igual. Solo se pierde la visibilidad de las trazas.
+
+Para habilitarlo:
+
+1. Crea una cuenta gratuita en [smith.langchain.com](https://smith.langchain.com)
+2. Genera una API key en **Settings → API Keys**
+3. Agrega las siguientes variables al `.env`:
+
+```env
+# LangSmith - trazabilidad de los agentes (opcional)
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_pt_...
+LANGSMITH_PROJECT=ai-incident-response-system
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+Con esto activo, cada request a `/incident` aparece en LangSmith como una traza llamada `incident_workflow` con el arbol completo de ejecucion:
+
+```
+incident_workflow
+├── orchestrator_agent    → decidio: "classifier"
+├── classifier_agent      → categoria=Redes | prioridad=Alta | 1.5s
+├── orchestrator_agent    → decidio: "recommendation"
+└── recomendation_agent
+    ├── LLM call          → solicita 3 herramientas en paralelo
+    ├── search_knowledge_base_rag   → 4 docs | similitud_max=75%
+    ├── search_similar_incidents_rag → 3 incidentes | similitud_max=91%
+    ├── insert_incident   → registrado en BD
+    └── LLM call          → sintesis final | 6.6s
+```
+
+Cada traza incluye la metadata `session_id` para filtrar conversaciones especificas.
 
 ---
 
@@ -170,6 +207,7 @@ docker compose down -v
 ```
 1. git clone <repo>
 2. Crear .env con OPENAI_API_KEY y POSTGRES_URL
+   (opcional) agregar LANGSMITH_TRACING, LANGSMITH_API_KEY y LANGSMITH_PROJECT
 3. docker compose up -d
 4. python -m venv venv && pip install -r requirements.txt
 5. python seed.py
