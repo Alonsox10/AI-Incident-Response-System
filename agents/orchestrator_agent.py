@@ -43,7 +43,7 @@ def orchestrator_agent(state: IncidentState):
         ]
 
         response = llm_structured.invoke(message_state)
-        print("ORCHESTRATOR EJECUTADO")
+        logger.info(f"[ORQUESTADOR] Decision: {response.next_agent} | current_step={current_step} | categoria={category}")
         return {"next_agent": response.next_agent}
     except Exception as e:
         logger.error(f"Error en el agente orquestador: {e}")
