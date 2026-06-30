@@ -1,11 +1,10 @@
-
+import time
 from models.llm import llm
 from loguru import logger
 from langchain_core.messages import SystemMessage, HumanMessage
 from state.state import IncidentState
 from schemas.models import IncidentClassificationOutput
 
-# Configura el modelo para que devuelva una salida estructurada
 llm_structured = llm.with_structured_output(IncidentClassificationOutput)
 
 
@@ -14,16 +13,23 @@ def classifier_agent(state: IncidentState):
         with open("prompt/classify_agent.md", "r", encoding="utf-8") as f:
             prompt = f.read()
 
-        #Ultimo mensaje del usuario
         user_input = state["messages"][-1].content
+        logger.info(f"[CLASIFICADOR] Clasificando incidente | input='{user_input[:80]}'")
 
         message_state = [
             SystemMessage(content=prompt),
             HumanMessage(content=user_input)
         ]
 
+        inicio = time.perf_counter()
         response = llm_structured.invoke(message_state)
-        print("Classifier agent ejecutado")
+        duracion = time.perf_counter() - inicio
+
+        logger.info(
+            f"[CLASIFICADOR] Resultado: categoria={response.category} | "
+            f"prioridad={response.priority} | causas={len(response.possible_causes)} | "
+            f"tiempo={duracion:.2f}s"
+        )
         return {
             "category": response.category,
             "priority": response.priority,
