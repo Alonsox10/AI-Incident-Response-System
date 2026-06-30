@@ -8,6 +8,7 @@ from database.vector_db import store_document_chunk, store_incident_embedding
 from pypdf import PdfReader
 import io
 import uuid
+import time
 
 app = FastAPI()
 
@@ -28,7 +29,13 @@ class HistoricalIncidentRequest(BaseModel):
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _get_config(session_id: str) -> dict:
-    return {"configurable": {"thread_id": session_id}}
+    return {
+        "configurable": {"thread_id": session_id},
+        # Metadata visible en LangSmith para filtrar trazas por sesión
+        "metadata": {"session_id": session_id},
+        "tags": [f"session:{session_id}"],
+        "run_name": "incident_workflow",
+    }
 
 
 def _ensure_session(requests: Request, response: Response) -> str:
@@ -72,10 +79,21 @@ def handle_incident(request: IncidentRequest, requests: Request, response: Respo
                 "current_step": None,
             }
 
+        tipo = "nueva" if es_nueva_conversacion else "continuacion"
+        logger.info(f"[REQUEST] Incidente recibido | sesion={session_id[:8]}... | tipo={tipo} | input='{request.user_input[:60]}'")
+
+        inicio = time.perf_counter()
         result = incident_app.invoke(input_state, config=config)
+        duracion = time.perf_counter() - inicio
 
         if not result:
             return {"error": "No se pudo procesar el incidente"}
+
+        logger.info(
+            f"[REQUEST] Completado | sesion={session_id[:8]}... | "
+            f"categoria={result.get('category')} | prioridad={result.get('priority')} | "
+            f"tiempo_total={duracion:.2f}s"
+        )
 
         return {
             "session_id": session_id,
