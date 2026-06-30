@@ -11,7 +11,13 @@
       "PowerShell(& \"C:\\\\Program Files\\\\PostgreSQL\\\\17\\\\bin\\\\psql.exe\" -U postgres -d incident_ai -c \"\\\\dt\" 2>&1)",
       "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\leonr\\\\OneDrive\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\\\\docs\\\\knowledge\")",
       "PowerShell(New-Item -ItemType File -Force \"c:\\\\Users\\\\leonr\\\\OneDrive\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\\\\docs\\\\knowledge\\\\.gitkeep\")",
-      "Bash(echo \"\" > \"c:\\\\Users\\\\leonr\\\\OneDrive\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\\\\README.md\")"
+      "Bash(echo \"\" > \"c:\\\\Users\\\\leonr\\\\OneDrive\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\\\\README.md\")",
+      "Bash(./venv/Scripts/python.exe -c ' *)",
+      "Bash(./venv/Scripts/python.exe -m uvicorn main:app --port 8001)",
+      "Bash(curl -s -c /tmp/cookies.txt -X POST http://127.0.0.1:8001/incident -H \"Content-Type: application/json\" -d \"{\\\\\"user_input\\\\\": \\\\\"El servidor de base de datos no responde\\\\\"}\")",
+      "Read(//tmp/**)",
+      "PowerShell(Stop-Process -Id 36544 -Force -ErrorAction SilentlyContinue; Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | Stop-Process -Force -ErrorAction SilentlyContinue; Remove-Item \"c:\\\\Users\\\\leonr\\\\OneDrive\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\\\\uvicorn_out.log\",\"c:\\\\Users\\\\leonr\\\\OneDrive\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\\\\uvicorn_err.log\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Content \"c:\\\\Users\\\\leonr\\\\OneDrive\\\\Desktop\\\\Certificaciones\\\\AI-Incident-Response-System\\\\test_err.log\" | Where-Object { $_ -match \"\\\\[RAG\" })"
     ],
     "additionalDirectories": [
       "c:\\Users\\leonr\\OneDrive\\Desktop\\Certificaciones\\AI-Incident-Response-System"
