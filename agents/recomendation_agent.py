@@ -1,3 +1,4 @@
+import time
 from loguru import logger
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from models.llm import llm_bind_tools
@@ -13,14 +14,17 @@ def recomendation_agent(state: IncidentState):
         has_tool_results = any(isinstance(m, ToolMessage) for m in messages)
 
         if has_tool_results:
-            # Segunda llamada: el LLM ya tiene los resultados de las herramientas (incluido el contexto RAG), genera la respuesta final
+            tool_names = [m.name for m in messages if isinstance(m, ToolMessage)]
+            logger.info(f"[RECOMENDACION] Segunda llamada — sintetizando respuesta | herramientas ejecutadas={tool_names}")
             message_state = [SystemMessage(content=prompt)] + list(messages)
         else:
-            # Primera llamada: construir contexto desde el estado y pedir al LLM que ejecute las herramientas RAG e insert
             input_user = messages[-1].content
             category = state["category"]
             priority = state["priority"]
-
+            logger.info(
+                f"[RECOMENDACION] Primera llamada — solicitando herramientas RAG | "
+                f"categoria={category} | prioridad={priority}"
+            )
             context = f"""Incidente reportado por el usuario:
 {input_user}
 
@@ -39,8 +43,16 @@ Puedes hacer las tres llamadas en paralelo.
                 HumanMessage(content=context),
             ]
 
+        inicio = time.perf_counter()
         response = llm_bind_tools.invoke(message_state)
-        print("Recomendation agent ejecutado")
+        duracion = time.perf_counter() - inicio
+
+        if has_tool_results:
+            logger.info(f"[RECOMENDACION] Respuesta generada | largo={len(response.content)} chars | tiempo={duracion:.2f}s")
+        else:
+            tool_calls = [tc["name"] for tc in response.tool_calls] if response.tool_calls else []
+            logger.info(f"[RECOMENDACION] Herramientas solicitadas={tool_calls} | tiempo={duracion:.2f}s")
+
         return {
             "messages": [response],
             "recommendations": response.content,
