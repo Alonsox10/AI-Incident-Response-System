@@ -1,0 +1,145 @@
+{
+  "description": "Dataset de evaluación para AI Incident Response System. 20 casos sintéticos, 4 por cada categoría soportada (Error backend, Error frontend, Infraestructura, Redes, Seguridad). Cada caso define el ground truth esperado para el Classifier Agent (category, priority, causas clave) que se usa para calcular métricas de precisión objetivas, y se usa el mismo texto para evaluar la calidad de las recomendaciones del Recommendation Agent vía LLM-judge.",
+  "cases": [
+    {
+      "id": "TC-01",
+      "expected_category": "Error backend",
+      "expected_priority": "Alta",
+      "user_input": "El endpoint /api/v1/pagos devuelve error 500 en todas las peticiones desde hace 20 minutos, justo después de un deploy a producción.",
+      "expected_causes_keywords": ["deploy", "variable de entorno", "conexión", "excepción"]
+    },
+    {
+      "id": "TC-02",
+      "expected_category": "Error backend",
+      "expected_priority": "Media",
+      "user_input": "Los usuarios reportan que el login tarda más de 30 segundos y a veces la sesión expira antes de que termine de autenticar.",
+      "expected_causes_keywords": ["timeout", "conexión", "base de datos", "pool"]
+    },
+    {
+      "id": "TC-03",
+      "expected_category": "Error backend",
+      "expected_priority": "Media",
+      "user_input": "La API de reportes financieros está devolviendo registros duplicados desde la última actualización del servicio de facturación.",
+      "expected_causes_keywords": ["duplicado", "query", "migración", "caché"]
+    },
+    {
+      "id": "TC-04",
+      "expected_category": "Error backend",
+      "expected_priority": "Baja",
+      "user_input": "El servicio de notificaciones dejó de enviar correos de confirmación silenciosamente, sin errores visibles en los logs.",
+      "expected_causes_keywords": ["cola", "worker", "smtp", "silencioso"]
+    },
+    {
+      "id": "TC-05",
+      "expected_category": "Error frontend",
+      "expected_priority": "Alta",
+      "user_input": "La página de checkout se queda completamente en blanco en Chrome después de la última actualización del sitio web.",
+      "expected_causes_keywords": ["javascript", "bundle", "consola", "versión"]
+    },
+    {
+      "id": "TC-06",
+      "expected_category": "Error frontend",
+      "expected_priority": "Media",
+      "user_input": "El botón de 'Guardar' no responde en el formulario de perfil de usuario cuando se accede desde dispositivos móviles.",
+      "expected_causes_keywords": ["evento", "css", "responsive", "móvil"]
+    },
+    {
+      "id": "TC-07",
+      "expected_category": "Error frontend",
+      "expected_priority": "Media",
+      "user_input": "Los gráficos del dashboard principal no cargan y la consola del navegador muestra un error 'undefined'.",
+      "expected_causes_keywords": ["api", "null", "consola", "render"]
+    },
+    {
+      "id": "TC-08",
+      "expected_category": "Error frontend",
+      "expected_priority": "Baja",
+      "user_input": "El sitio muestra estilos rotos (CSS) únicamente para los usuarios que no han limpiado la caché del navegador.",
+      "expected_causes_keywords": ["caché", "css", "versión", "hash"]
+    },
+    {
+      "id": "TC-09",
+      "expected_category": "Infraestructura",
+      "expected_priority": "Alta",
+      "user_input": "El servidor de aplicaciones se reinicia solo cada 2 horas aproximadamente, sin ninguna razón aparente en los logs.",
+      "expected_causes_keywords": ["memoria", "recursos", "proceso", "logs"]
+    },
+    {
+      "id": "TC-10",
+      "expected_category": "Infraestructura",
+      "expected_priority": "Alta",
+      "user_input": "El disco del servidor donde se almacenan los logs está al 95% de uso y sigue creciendo rápidamente.",
+      "expected_causes_keywords": ["disco", "logs", "rotación", "espacio"]
+    },
+    {
+      "id": "TC-11",
+      "expected_category": "Infraestructura",
+      "expected_priority": "Media",
+      "user_input": "La latencia de respuesta del backend se triplicó desde ayer, específicamente en el horario pico de la mañana.",
+      "expected_causes_keywords": ["cpu", "carga", "escalado", "recursos"]
+    },
+    {
+      "id": "TC-12",
+      "expected_category": "Infraestructura",
+      "expected_priority": "Alta",
+      "user_input": "El clúster de Kubernetes muestra varios pods en estado CrashLoopBackOff de forma intermitente desde esta mañana.",
+      "expected_causes_keywords": ["pod", "memoria", "healthcheck", "reinicio"]
+    },
+    {
+      "id": "TC-13",
+      "expected_category": "Redes",
+      "expected_priority": "Alta",
+      "user_input": "Los usuarios de la sucursal norte no pueden acceder a ningún sistema interno desde esta mañana temprano.",
+      "expected_causes_keywords": ["enlace", "isp", "router", "conectividad"]
+    },
+    {
+      "id": "TC-14",
+      "expected_category": "Redes",
+      "expected_priority": "Media",
+      "user_input": "La conexión VPN corporativa se cae cada 10 minutos aproximadamente para los empleados que trabajan remoto.",
+      "expected_causes_keywords": ["vpn", "certificado", "autenticación", "túnel"]
+    },
+    {
+      "id": "TC-15",
+      "expected_category": "Redes",
+      "expected_priority": "Media",
+      "user_input": "El tiempo de respuesta entre el datacenter principal y la oficina central aumentó considerablemente esta semana.",
+      "expected_causes_keywords": ["latencia", "ancho de banda", "enlace", "saturación"]
+    },
+    {
+      "id": "TC-16",
+      "expected_category": "Redes",
+      "expected_priority": "Alta",
+      "user_input": "Un switch del piso 3 dejó de responder por completo y varios equipos de esa área perdieron la red.",
+      "expected_causes_keywords": ["switch", "puerto", "hardware", "reinicio"]
+    },
+    {
+      "id": "TC-17",
+      "expected_category": "Seguridad",
+      "expected_priority": "Alta",
+      "user_input": "Se detectaron múltiples intentos fallidos de inicio de sesión desde IPs desconocidas en la cuenta de un administrador.",
+      "expected_causes_keywords": ["fuerza bruta", "mfa", "bloqueo", "auditoría"]
+    },
+    {
+      "id": "TC-18",
+      "expected_category": "Seguridad",
+      "expected_priority": "Alta",
+      "user_input": "Un empleado reportó haber hecho clic en un enlace de un correo sospechoso y ahora su equipo se comporta de forma extraña.",
+      "expected_causes_keywords": ["phishing", "malware", "aislar", "antivirus"]
+    },
+    {
+      "id": "TC-19",
+      "expected_category": "Seguridad",
+      "expected_priority": "Media",
+      "user_input": "Se encontró una regla de firewall abierta hacia internet en un puerto que no debería estar expuesto.",
+      "expected_causes_keywords": ["firewall", "puerto", "exposición", "regla"]
+    },
+    {
+      "id": "TC-20",
+      "expected_category": "Seguridad",
+      "expected_priority": "Media",
+      "user_input": "El escaneo de vulnerabilidades trimestral encontró una versión desactualizada de OpenSSL en tres servidores de producción.",
+      "expected_causes_keywords": ["parche", "actualización", "vulnerabilidad", "openssl"]
+    }
+  ]
+}
