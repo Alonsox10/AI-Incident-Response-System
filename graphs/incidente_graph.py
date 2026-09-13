@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from agents.orchestrator_agent import orchestrator_agent
 from graphs.router import router
 from agents.classifier_agent import classifier_agent
+from agents.faq_agent import faq_agent
 from database.vector_db import initialize_vector_tables
 from langchain_core.messages import AIMessage
 import os
@@ -35,6 +36,7 @@ graph.add_node("orchestrator", orchestrator_agent)
 graph.set_entry_point("orchestrator")
 graph.add_node("classifier", classifier_agent)
 graph.add_node("recommendation", recomendation_agent)
+graph.add_node("faq", faq_agent)
 
 # El ToolNode ahora incluye las dos herramientas RAG junto a las herramientas originales
 all_tools = [
@@ -52,10 +54,13 @@ routing_function = router
 routes = {
     "classifier": "classifier",
     "recommendation": "recommendation",
+    "faq": "faq",
     "end": END,
 }
 
 graph.add_edge("classifier", "orchestrator")
+# El nodo de FAQ resuelve siempre en una sola pasada: no pasa por tools ni por un router condicional
+graph.add_edge("faq", END)
 graph.add_edge("tools", "recommendation")
 graph.add_conditional_edges("recommendation", recommendation_router, {"tools": "tools", END: END})
 graph.add_conditional_edges(source_node, routing_function, routes)
