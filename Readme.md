@@ -32,6 +32,19 @@ POSTGRES_URL=postgresql://postgres:alonso@localhost:5432/incident_ai
 
 > En Docker el servicio usa internamente `postgresql://postgres:alonso@postgres:5432/incident_ai` (definido en `docker-compose.yml`). El `.env` es para correr la app localmente fuera de Docker.
 
+Variables opcionales del camino de FAQs:
+
+```env
+# Similitud a partir de la cual una FAQ se devuelve tal cual, sin generarla con el LLM
+FAQ_HIGH_CONFIDENCE_THRESHOLD=0.75
+
+# Similitud con que el orquestador enruta directo a FAQ sin consultar al LLM
+FAQ_ROUTING_THRESHOLD=0.85
+```
+
+- `FAQ_HIGH_CONFIDENCE_THRESHOLD` (default `0.75`) controla **como responde** el agente de FAQs. Subirlo lo hace mas conservador (sintetiza mas seguido con el LLM); bajarlo hace que devuelva respuestas almacenadas con mas frecuencia.
+- `FAQ_ROUTING_THRESHOLD` (default `0.85`) controla **que llega** al agente de FAQs. Es deliberadamente mas alto: entre `0.75` y `0.85` caen los parafraseos de un sintoma activo ("mi equipo tarda mucho en prender hoy" da ~0.74), que deben pasar por el criterio del orquestador en vez de cortocircuitar a FAQ. Bajarlo acerca el sistema a "si existe una FAQ parecida, respondela"; subirlo, a "solo si la pregunta esta literalmente documentada".
+
 ### Trazabilidad con LangSmith (opcional)
 
 LangSmith permite ver en detalle cada decision del agente: que nodo del grafo se ejecuto, que llamo cada herramienta, que recupero el RAG, cuanto tardo cada paso y cuanto costo en tokens.
@@ -121,9 +134,10 @@ python seed.py
 
 Que hace internamente:
 
-1. Crea las tablas vectoriales (`knowledge_base`, `incident_embeddings`) con sus indices HNSW
+1. Crea las tablas vectoriales (`knowledge_base`, `incident_embeddings`, `faqs`) con sus indices HNSW
 2. Ingesta todos los PDFs de `docs/knowledge/` en `knowledge_base`
 3. Carga 7 incidentes historicos resueltos en `incident_embeddings`
+4. Parsea `docs/knowledge/faqs.md` y carga las preguntas frecuentes en `faqs`
 
 Salida esperada:
 
@@ -185,6 +199,32 @@ python seed.py
 ```
 
 El script detecta los PDFs nuevos y solo ingesta los que aun no estan en la base de datos.
+
+---
+
+## Agregar nuevas FAQs
+
+Las preguntas frecuentes viven en `docs/knowledge/faqs.md`, en Markdown plano. La convencion esta documentada al inicio de ese mismo archivo:
+
+```markdown
+## Categoria
+
+### La pregunta tal como la formula el usuario
+
+Severidad: Media
+
+**Respuesta:**
+
+Texto de la respuesta, hasta el siguiente encabezado.
+```
+
+Para agregar una FAQ, copia el bloque de cualquier caso existente, editalo y vuelve a correr:
+
+```bash
+python seed.py
+```
+
+> La ingesta de FAQs es idempotente a nivel de tabla: si `faqs` ya tiene datos, el paso se omite. Para recargarla tras editar el archivo, vacia la tabla primero (`TRUNCATE faqs;`) y vuelve a correr el seed.
 
 ---
 
