@@ -25,8 +25,10 @@ from database.vector_db import (
     initialize_vector_tables,
     store_document_chunk,
     store_incident_embedding,
+    store_faq,
 )
 from service.embedding_service import get_embedding, chunk_text
+from service.faq_loader import parse_faqs
 
 
 # ─── Configuración ─────────────────────────────────────────────────────────────
@@ -100,6 +102,16 @@ def _incidentes_ya_cargados() -> bool:
     connection = get_connection()
     try:
         row = connection.execute("SELECT COUNT(*) FROM incident_embeddings").fetchone()
+        return row[0] > 0
+    finally:
+        connection.close()
+
+
+def _faqs_ya_cargadas() -> bool:
+    """Retorna True si la tabla faqs ya tiene datos."""
+    connection = get_connection()
+    try:
+        row = connection.execute("SELECT COUNT(*) FROM faqs").fetchone()
         return row[0] > 0
     finally:
         connection.close()
@@ -185,6 +197,35 @@ def ingestar_incidentes_historicos() -> None:
     print(f"  [ok] {len(INCIDENTES_HISTORICOS)} incidentes históricos almacenados.")
 
 
+# ─── Ingesta de FAQs ──────────────────────────────────────────────────────────
+
+def ingestar_faqs() -> None:
+    """Parsea docs/knowledge/faqs.md y carga cada pregunta vectorizada en la tabla faqs."""
+    if _faqs_ya_cargadas():
+        print("  [omitido] Las FAQs ya están cargadas.")
+        return
+
+    faqs = parse_faqs()
+    if not faqs:
+        print("  [aviso] No se encontraron FAQs en el archivo. Revisa la convención de formato.")
+        return
+
+    print(f"  Cargando {len(faqs)} FAQs...")
+
+    for i, faq in enumerate(faqs):
+        embedding = get_embedding(faq["question"])
+        store_faq(
+            question=faq["question"],
+            answer=faq["answer"],
+            category=faq["category"],
+            embedding=embedding,
+            metadata=faq["metadata"],
+        )
+        print(f"    [{i + 1}/{len(faqs)}] '{faq['question'][:60]}...'")
+
+    print(f"  [ok] {len(faqs)} FAQs almacenadas.")
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -192,16 +233,20 @@ def main():
     print("   Seed — Sistema de Respuesta a Incidentes")
     print("========================================\n")
 
-    print("[1/3] Inicializando tablas vectoriales...")
+    print("[1/4] Inicializando tablas vectoriales...")
     initialize_vector_tables()
     print("  [ok] Tablas listas.\n")
 
-    print("[2/3] Ingestando PDFs de knowledge base...")
+    print("[2/4] Ingestando PDFs de knowledge base...")
     ingestar_todos_los_pdfs()
     print()
 
-    print("[3/3] Cargando incidentes históricos...")
+    print("[3/4] Cargando incidentes históricos...")
     ingestar_incidentes_historicos()
+    print()
+
+    print("[4/4] Cargando FAQs...")
+    ingestar_faqs()
 
     print("\n========================================")
     print("   Seed completado correctamente.")
