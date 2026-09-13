@@ -11,14 +11,16 @@ def _vec(embedding: list[float]) -> str:
 
 def initialize_vector_tables() -> None:
     """
-    Ejecuta db/vector_schema.sql para crear la extensión pgvector y las tablas
-    knowledge_base e incident_embeddings (operación idempotente).
+    Ejecuta db/vector_schema.sql y db/faq_schema.sql para crear la extensión pgvector
+    y las tablas knowledge_base, incident_embeddings y faqs (operación idempotente).
     """
     connection = None
     try:
-        schema_path = os.path.join(os.path.dirname(__file__), "..", "db", "vector_schema.sql")
-        with open(schema_path, "r", encoding="utf-8") as f:
-            sql = f.read()
+        db_dir = os.path.join(os.path.dirname(__file__), "..", "db")
+        sql = ""
+        for schema_file in ("vector_schema.sql", "faq_schema.sql"):
+            with open(os.path.join(db_dir, schema_file), "r", encoding="utf-8") as f:
+                sql += f.read() + "\n"
 
         connection = get_connection()
         # Dividir por punto y coma y ejecutar cada sentencia por separado
@@ -178,6 +180,80 @@ def search_similar_incidents(
         ]
     except Exception as e:
         logger.error(f"Error al buscar incidentes similares: {e}")
+        raise
+    finally:
+        if connection:
+            connection.close()
+
+
+# ─── FAQs ─────────────────────────────────────────────────────────────────────
+
+def store_faq(
+    question: str,
+    answer: str,
+    category: str,
+    embedding: list[float],
+    metadata: dict | None = None,
+) -> int:
+    """Persiste una FAQ con el embedding de su pregunta. Retorna el id de la fila creada."""
+    connection = None
+    try:
+        connection = get_connection()
+        row = connection.execute(
+            """
+            INSERT INTO faqs (question, answer, category, embedding, metadata)
+            VALUES (%s, %s, %s, %s::vector, %s::jsonb)
+            RETURNING id
+            """,
+            (question, answer, category, _vec(embedding), json.dumps(metadata or {})),
+        ).fetchone()
+        return row[0]
+    except Exception as e:
+        logger.error(f"Error al almacenar la FAQ: {e}")
+        raise
+    finally:
+        if connection:
+            connection.close()
+
+
+def search_faqs(
+    query_embedding: list[float],
+    top_k: int = 3,
+    similarity_threshold: float = 0.40,
+) -> list[dict]:
+    """
+    Retorna hasta top_k FAQs cuya similitud coseno con query_embedding sea
+    >= similarity_threshold, ordenadas de mayor a menor similitud.
+    """
+    connection = None
+    try:
+        connection = get_connection()
+        vec = _vec(query_embedding)
+        rows = connection.execute(
+            """
+            SELECT id, question, answer, category, metadata,
+                   1 - (embedding <=> %s::vector) AS similarity
+            FROM faqs
+            WHERE 1 - (embedding <=> %s::vector) >= %s
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s
+            """,
+            (vec, vec, similarity_threshold, vec, top_k),
+        ).fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "question": row[1],
+                "answer": row[2],
+                "category": row[3],
+                "metadata": row[4],
+                "similarity": float(row[5]),
+            }
+            for row in rows
+        ]
+    except Exception as e:
+        logger.error(f"Error al buscar en las FAQs: {e}")
         raise
     finally:
         if connection:
