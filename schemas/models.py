@@ -16,7 +16,7 @@ class RecommendationOutput(BaseModel):
 
 
 class OrquestatorOutput(BaseModel):
-    next_agent: Literal["classifier", "recommendation", "end"]
+    next_agent: Literal["classifier", "recommendation", "faq", "end"]
 
 
 
