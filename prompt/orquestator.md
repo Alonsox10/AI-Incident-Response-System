@@ -54,6 +54,15 @@ Ejemplos que van a `"faq"`:
 - "¿Qué pasos se siguen cuando falla el pipeline de CI/CD?"
 - "¿Qué revisan ustedes cuando la red está lenta?"
 
+**Forma condicional e hipotética** — también va a `"faq"`. Cuando la pregunta plantea un supuesto con "si…" o "cuando…" en vez de afirmar que está pasando, es una consulta de procedimiento aunque el tema suene a avería:
+
+- "¿Qué reviso si la web tira error interno?"
+- "¿Qué pasos hay que seguir si la impresora no saca nada?"
+- "¿Qué hago si un servidor deja de responder?"
+- "¿Cómo se arregla cuando alguien no puede conectarse por VPN?"
+
+La diferencia con un reporte real está en quién y cuándo: *"¿qué reviso si la web tira error?"* pregunta por el procedimiento; *"la web está tirando error"* informa un hecho presente.
+
 Ejemplos que van a `"classifier"`:
 
 - "El servidor de producción no responde."
@@ -72,6 +81,11 @@ Ante la duda, prefiere `"classifier"`: es preferible clasificar de más que deja
 
 - Si `current_step` es `"classifier_done"`:
   devuelve `"recommendation"`
+
+- Si `current_step` es `"needs_detail"`:
+  devuelve `"end"`. El clasificador ya determinó que el mensaje no trae un síntoma
+  accionable y pidió más detalle al usuario. No lo mandes a recomendación: no hay nada
+  que diagnosticar todavía.
 
 - Si el workflow ya terminó (`current_step` es `"recommendation_done"` o `"faq_done"`):
   devuelve `"end"`
