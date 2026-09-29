@@ -1,11 +1,17 @@
 import time
 from models.llm import llm
 from loguru import logger
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from state.state import IncidentState
 from schemas.models import IncidentClassificationOutput
 
 llm_structured = llm.with_structured_output(IncidentClassificationOutput)
+
+PEDIR_DETALLE = (
+    "Necesito algo más de detalle para ayudarte. ¿Qué sistema o aplicación está fallando, "
+    "qué esperabas que pasara y qué pasó en su lugar? Si ves algún mensaje de error, "
+    "cópialo tal cual."
+)
 
 
 def classifier_agent(state: IncidentState):
@@ -24,6 +30,18 @@ def classifier_agent(state: IncidentState):
         inicio = time.perf_counter()
         response = llm_structured.invoke(message_state)
         duracion = time.perf_counter() - inicio
+
+        if not response.informacion_suficiente:
+            logger.info(
+                f"[CLASIFICADOR] Reporte sin sintoma accionable — se pide detalle | tiempo={duracion:.2f}s"
+            )
+            # No se persisten category/priority: serían una etiqueta inventada sobre un
+            # mensaje vacío. Tampoco se sigue a recomendación, así que no se registra incidente.
+            return {
+                "messages": [AIMessage(content=PEDIR_DETALLE)],
+                "recommendations": PEDIR_DETALLE,
+                "current_step": "needs_detail",
+            }
 
         logger.info(
             f"[CLASIFICADOR] Resultado: categoria={response.category} | "
