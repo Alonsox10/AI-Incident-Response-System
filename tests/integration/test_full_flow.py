@@ -20,6 +20,7 @@ from state.state import IncidentState
 from agents.orchestrator_agent import orchestrator_agent
 from agents.classifier_agent import classifier_agent
 from agents.recomendation_agent import recomendation_agent
+from agents.faq_agent import faq_agent
 from tools.incidente_tools import search_incident_by_category, insert_incident
 from graphs.router import router
 
@@ -34,15 +35,19 @@ def build_test_graph():
     graph.set_entry_point("orchestrator")
     graph.add_node("classifier", classifier_agent)
     graph.add_node("recommendation", recomendation_agent)
+    graph.add_node("faq", faq_agent)
     graph.add_node("tools", ToolNode([search_incident_by_category, insert_incident]))
 
     graph.add_edge("classifier", "orchestrator")
     graph.add_edge("recommendation", "tools")
     graph.add_edge("tools", END)
+    # El nodo de FAQ resuelve siempre en una sola pasada, igual que en el grafo real.
+    graph.add_edge("faq", END)
 
     routes = {
         "classifier": "classifier",
         "recommendation": "recommendation",
+        "faq": "faq",
         "end": END,
     }
     graph.add_conditional_edges("orchestrator", router, routes)
@@ -79,11 +84,12 @@ class TestFullIncidentFlow:
         # Mock de la conexión a PostgreSQL usada por las tools
         mock_conn = MagicMock()
         mock_conn.execute.return_value.fetchall.return_value = [
-            ("Backend server down", "High"),
-            ("API response timeout", "Medium"),
+            ("Backend server down", "Alta"),
+            ("API response timeout", "Media"),
         ]
 
-        with patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
+        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", return_value=None), \
+             patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
              patch("agents.classifier_agent.llm_structured") as mock_cls, \
              patch("agents.recomendation_agent.llm_bind_tools") as mock_rec, \
              patch("tools.incidente_tools.get_connection", return_value=mock_conn):
@@ -91,8 +97,9 @@ class TestFullIncidentFlow:
             mock_orch.invoke.side_effect = orchestrator_responses
             mock_cls.invoke.return_value = IncidentClassificationOutput(
                 category="Error backend",
-                priority="High",
+                priority="Alta",
                 possible_causes=["Timeout de conexión", "Memoria agotada"],
+                informacion_suficiente=True,
             )
             mock_rec.invoke.return_value = llm_recommendation_response
 
@@ -104,7 +111,7 @@ class TestFullIncidentFlow:
             )
 
         assert final_state["category"] == "Error backend"
-        assert final_state["priority"] == "High"
+        assert final_state["priority"] == "Alta"
         assert "Timeout de conexión" in final_state["possible_causes"]
         assert final_state["current_step"] == "recommendation_done"
 
@@ -131,7 +138,8 @@ class TestFullIncidentFlow:
         mock_conn = MagicMock()
         mock_conn.execute.return_value.fetchall.return_value = []
 
-        with patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
+        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", return_value=None), \
+             patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
              patch("agents.classifier_agent.llm_structured") as mock_cls, \
              patch("agents.recomendation_agent.llm_bind_tools") as mock_rec, \
              patch("tools.incidente_tools.get_connection", return_value=mock_conn):
@@ -139,8 +147,9 @@ class TestFullIncidentFlow:
             mock_orch.invoke.side_effect = orchestrator_responses
             mock_cls.invoke.return_value = IncidentClassificationOutput(
                 category="Seguridad",
-                priority="High",
+                priority="Alta",
                 possible_causes=["Acceso no autorizado"],
+                informacion_suficiente=True,
             )
             mock_rec.invoke.return_value = llm_recommendation_response
 
@@ -160,7 +169,8 @@ class TestFullIncidentFlow:
         Si el orchestrator decide 'end' en la primera llamada, el workflow
         termina sin llamar al classifier ni al recommendation agent.
         """
-        with patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
+        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", return_value=None), \
+             patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
              patch("agents.classifier_agent.llm_structured") as mock_cls, \
              patch("agents.recomendation_agent.llm_bind_tools") as mock_rec:
 
@@ -197,7 +207,8 @@ class TestFullIncidentFlow:
         mock_conn = MagicMock()
         mock_conn.execute.return_value.fetchall.return_value = []
 
-        with patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
+        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", return_value=None), \
+             patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
              patch("agents.classifier_agent.llm_structured") as mock_cls, \
              patch("agents.recomendation_agent.llm_bind_tools") as mock_rec, \
              patch("tools.incidente_tools.get_connection", return_value=mock_conn):
@@ -205,8 +216,9 @@ class TestFullIncidentFlow:
             mock_orch.invoke.side_effect = orchestrator_responses
             mock_cls.invoke.return_value = IncidentClassificationOutput(
                 category="Redes",
-                priority="Medium",
+                priority="Media",
                 possible_causes=["Latencia alta"],
+                informacion_suficiente=True,
             )
             mock_rec.invoke.return_value = llm_recommendation_response
 
@@ -221,3 +233,90 @@ class TestFullIncidentFlow:
         # call_args[0] = (query_sql, params_tuple) → params_tuple es call_args[0][1]
         sql_params = mock_conn.execute.call_args[0][1]
         assert "Redes" in sql_params
+
+
+class TestFullFaqFlow:
+    """
+    Camino paralelo de FAQ: no clasifica ni registra nada, resuelve en una sola
+    pasada (orchestrator → faq → END) sin pasar por classifier/recommendation/tools.
+    """
+
+    def test_pregunta_documentada_resuelve_por_el_prechequeo_sin_llamar_al_llm_del_orquestador(self):
+        """
+        Si la pregunta coincide con una FAQ documentada, el pre-chequeo determinístico
+        enruta directo a faq sin gastar una llamada al LLM del orquestador; el faq_agent
+        encuentra alta confianza y devuelve el answer almacenado sin llamar al LLM tampoco.
+        """
+        faq_almacenada = {
+            "id": 1,
+            "question": "¿Cómo desbloqueo una cuenta de usuario en Active Directory?",
+            "answer": "Ejecutar Unlock-ADAccount -Identity usuario o desbloquear desde ADUC.",
+            "category": "Active Directory y usuarios",
+            "metadata": {"severity": "Baja"},
+            "similarity": 0.93,
+        }
+
+        with patch("agents.orchestrator_agent.get_embedding", return_value=[0.0] * 1536), \
+             patch("agents.orchestrator_agent.search_faqs", return_value=[faq_almacenada]), \
+             patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
+             patch("agents.faq_agent.get_embedding", return_value=[0.0] * 1536), \
+             patch("agents.faq_agent.search_faqs", return_value=[faq_almacenada]), \
+             patch("agents.faq_agent.llm") as mock_faq_llm, \
+             patch("agents.classifier_agent.llm_structured") as mock_cls, \
+             patch("agents.recomendation_agent.llm_bind_tools") as mock_rec:
+
+            app = build_test_graph()
+            config = {"configurable": {"thread_id": "integration-test-faq-001"}}
+            final_state = app.invoke(
+                {"messages": [HumanMessage(content="¿Cómo desbloqueo una cuenta de usuario en Active Directory?")]},
+                config=config,
+            )
+
+        assert final_state["current_step"] == "faq_done"
+        assert final_state["recommendations"] == faq_almacenada["answer"]
+        assert final_state.get("category") is None
+        mock_orch.invoke.assert_not_called()
+        mock_faq_llm.invoke.assert_not_called()
+        mock_cls.invoke.assert_not_called()
+        mock_rec.invoke.assert_not_called()
+
+    def test_pregunta_de_procedimiento_sin_match_documentado_la_enruta_el_llm_del_orquestador(self):
+        """
+        Sin match determinístico, decide el LLM del orquestador; con baja similitud en
+        el faq_agent, se sintetiza la respuesta con una única llamada a su LLM.
+        """
+        candidato_baja_confianza = {
+            "id": 2,
+            "question": "¿Cuál es el procedimiento ante una infección por ransomware?",
+            "answer": "Aislar los equipos afectados y activar el plan de respuesta a incidentes.",
+            "category": "Seguridad",
+            "metadata": {"severity": "Crítica"},
+            "similarity": 0.55,
+        }
+        respuesta_sintetizada = AIMessage(content="Aísla el equipo de la red y activa el protocolo de seguridad.")
+
+        with patch("agents.orchestrator_agent.get_embedding", return_value=[0.0] * 1536), \
+             patch("agents.orchestrator_agent.search_faqs", return_value=[]), \
+             patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
+             patch("agents.faq_agent.get_embedding", return_value=[0.0] * 1536), \
+             patch("agents.faq_agent.search_faqs", return_value=[candidato_baja_confianza]), \
+             patch("agents.faq_agent.llm") as mock_faq_llm, \
+             patch("agents.classifier_agent.llm_structured") as mock_cls, \
+             patch("agents.recomendation_agent.llm_bind_tools") as mock_rec:
+
+            mock_orch.invoke.return_value = OrquestatorOutput(next_agent="faq")
+            mock_faq_llm.invoke.return_value = respuesta_sintetizada
+
+            app = build_test_graph()
+            config = {"configurable": {"thread_id": "integration-test-faq-002"}}
+            final_state = app.invoke(
+                {"messages": [HumanMessage(content="¿Qué debo hacer ante un ataque de ransomware?")]},
+                config=config,
+            )
+
+        assert final_state["current_step"] == "faq_done"
+        assert final_state["recommendations"] == respuesta_sintetizada.content
+        mock_orch.invoke.assert_called_once()
+        mock_faq_llm.invoke.assert_called_once()
+        mock_cls.invoke.assert_not_called()
+        mock_rec.invoke.assert_not_called()
