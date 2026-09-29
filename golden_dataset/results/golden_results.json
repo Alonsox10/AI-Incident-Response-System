@@ -1,0 +1,71 @@
+[
+  {
+    "case": {
+      "id": "GD-01",
+      "user_input": "El endpoint /api/v1/pagos devuelve error 500 en todas las peticiones desde hace 20 minutos, justo después de un deploy a producción. Ningún usuario puede completar una compra.",
+      "expected_category": "Error backend",
+      "expected_priority": "Alta",
+      "nota": "Caída total sin workaround tras evento de código."
+    },
+    "obs": {
+      "category": "Error backend",
+      "priority": "Alta",
+      "possible_causes": [
+        "Excepción no controlada en el endpoint /api/v1/pagos",
+        "Despliegue reciente con variable de entorno incorrecta",
+        "Problema en la lógica de procesamiento de pagos tras el último cambio"
+      ],
+      "current_step": "classifier_done",
+      "duracion_s": 2.35,
+      "error": null
+    },
+    "cat_ok": true,
+    "pri_ok": true
+  },
+  {
+    "case": {
+      "id": "GD-02",
+      "user_input": "La API de perfiles está devolviendo los datos de otro usuario cuando se consulta con ciertos IDs. Confirmado en producción con dos cuentas distintas.",
+      "expected_category": "Error backend",
+      "expected_priority": "Alta",
+      "nota": "Fuga de datos entre cuentas: riesgo real mientras el incidente siga abierto."
+    },
+    "obs": {
+      "category": "Error backend",
+      "priority": "Alta",
+      "possible_causes": [
+        "Error en la lógica de consulta de la API que mezcla los datos de los usuarios",
+        "Problema de caché que devuelve datos incorrectos",
+        "Fallo en la validación de permisos para acceder a los datos de los usuarios"
+      ],
+      "current_step": "classifier_done",
+      "duracion_s": 1.39,
+      "error": null
+    },
+    "cat_ok": true,
+    "pri_ok": true
+  },
+  {
+    "case": {
+      "id": "GD-03",
+      "user_input": "El reporte de facturación mensual está trayendo registros duplicados desde la última actualización del servicio. Se puede deduplicar a mano mientras tanto.",
+      "expected_category": "Error backend",
+      "expected_priority": "Media",
+      "nota": "Datos inconsistentes con workaround disponible."
+    },
+    "obs": {
+      "category": "Error backend",
+      "priority": "Media",
+      "possible_causes": [
+        "Error en la lógica de generación del reporte",
+        "Problema en la consulta a la base de datos que causa duplicados",
+        "Falta de un mecanismo de deduplicación en el proceso de facturación"
+      ],
+      "current_step": "classifier_done",
+      "duracion_s": 1.69,
+      "error": null
+    },
+    "cat_ok": true,
+    "pri_ok": true
+  }
+]

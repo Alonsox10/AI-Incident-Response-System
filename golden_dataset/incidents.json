@@ -1,0 +1,223 @@
+{
+  "description": "Golden dataset de clasificación: 30 incidentes con ground truth de categoría y prioridad, 6 por cada categoría soportada. Es el set de regresión estable del clasificador — se corre en proceso, sin servidor ni Postgres levantado, para poder verificarlo en cualquier momento. Incluye a propósito los pares que el prompt marca como confundibles (Error backend vs Infraestructura, Redes vs Infraestructura) y los tres niveles de prioridad, porque ahí es donde un golden set gana su valor.",
+  "taxonomia": {
+    "categorias": ["Error backend", "Error frontend", "Infraestructura", "Redes", "Seguridad"],
+    "prioridades": ["Alta", "Media", "Baja"]
+  },
+  "cases": [
+    {
+      "id": "GD-01",
+      "user_input": "El endpoint /api/v1/pagos devuelve error 500 en todas las peticiones desde hace 20 minutos, justo después de un deploy a producción. Ningún usuario puede completar una compra.",
+      "expected_category": "Error backend",
+      "expected_priority": "Alta",
+      "nota": "Caída total sin workaround tras evento de código."
+    },
+    {
+      "id": "GD-02",
+      "user_input": "La API de perfiles está devolviendo los datos de otro usuario cuando se consulta con ciertos IDs. Confirmado en producción con dos cuentas distintas.",
+      "expected_category": "Error backend",
+      "expected_priority": "Alta",
+      "nota": "Fuga de datos entre cuentas: riesgo real mientras el incidente siga abierto."
+    },
+    {
+      "id": "GD-03",
+      "user_input": "El reporte de facturación mensual está trayendo registros duplicados desde la última actualización del servicio. Se puede deduplicar a mano mientras tanto.",
+      "expected_category": "Error backend",
+      "expected_priority": "Media",
+      "nota": "Datos inconsistentes con workaround disponible."
+    },
+    {
+      "id": "GD-04",
+      "user_input": "El login tarda más de 30 segundos en horario pico y a veces la sesión expira antes de autenticar. Fuera de ese horario funciona normal.",
+      "expected_category": "Error backend",
+      "expected_priority": "Media",
+      "nota": "Degradado bajo ciertas condiciones. Trampa: correlaciona con carga, pero el síntoma es del servicio de auth, no de la plataforma."
+    },
+    {
+      "id": "GD-05",
+      "user_input": "El servicio de notificaciones dejó de enviar los correos de confirmación de pedido. No aparece ningún error en los logs, simplemente no salen.",
+      "expected_category": "Error backend",
+      "expected_priority": "Media",
+      "nota": "Fallo silencioso en una función específica."
+    },
+    {
+      "id": "GD-06",
+      "user_input": "El endpoint de histórico devuelve las fechas en UTC en lugar de la hora local configurada. Los datos son correctos, solo el huso está mal.",
+      "expected_category": "Error backend",
+      "expected_priority": "Baja",
+      "nota": "Inconsistencia menor sin pérdida de funcionalidad."
+    },
+
+    {
+      "id": "GD-07",
+      "user_input": "La página de checkout se queda completamente en blanco en Chrome después del release de anoche. Los usuarios no pueden pagar por ningún medio.",
+      "expected_category": "Error frontend",
+      "expected_priority": "Alta",
+      "nota": "Bloquea la tarea crítica para todos los usuarios de ese navegador."
+    },
+    {
+      "id": "GD-08",
+      "user_input": "El botón de exportar a Excel no hace nada en Safari. En Chrome y Firefox funciona bien.",
+      "expected_category": "Error frontend",
+      "expected_priority": "Media",
+      "nota": "Subconjunto de usuarios, con workaround (usar otro navegador)."
+    },
+    {
+      "id": "GD-09",
+      "user_input": "El formulario de alta pierde todo lo escrito si el usuario cambia de pestaña y vuelve. Hay que cargarlo de nuevo desde cero.",
+      "expected_category": "Error frontend",
+      "expected_priority": "Media",
+      "nota": "Pérdida de trabajo del usuario, pero recuperable rehaciéndolo."
+    },
+    {
+      "id": "GD-10",
+      "user_input": "El dashboard de métricas no se actualiza solo, hay que recargar la página con F5 para ver datos nuevos.",
+      "expected_category": "Error frontend",
+      "expected_priority": "Media",
+      "nota": "Funcionalidad degradada con workaround obvio."
+    },
+    {
+      "id": "GD-11",
+      "user_input": "Los estilos del pie de página se ven rotos desde el último despliegue de CSS: los enlaces aparecen amontonados.",
+      "expected_category": "Error frontend",
+      "expected_priority": "Baja",
+      "nota": "Puramente cosmético."
+    },
+    {
+      "id": "GD-12",
+      "user_input": "En pantallas de móvil el título de las tarjetas aparece cortado a la mitad. Se entiende igual pero se ve mal.",
+      "expected_category": "Error frontend",
+      "expected_priority": "Baja",
+      "nota": "Cosmético en un caso de borde."
+    },
+
+    {
+      "id": "GD-13",
+      "user_input": "El disco del servidor de base de datos está al 98% y subiendo un punto por hora. Todavía responde, pero a este ritmo se llena esta noche.",
+      "expected_category": "Infraestructura",
+      "expected_priority": "Alta",
+      "nota": "Servicio arriba, pero deriva en caída total si no se atiende ahora."
+    },
+    {
+      "id": "GD-14",
+      "user_input": "Los pods del servicio de órdenes están en CrashLoopBackOff desde hace 15 minutos y el tráfico se está cayendo.",
+      "expected_category": "Infraestructura",
+      "expected_priority": "Alta",
+      "nota": "Reinicios recurrentes con impacto en curso."
+    },
+    {
+      "id": "GD-15",
+      "user_input": "Un servidor de aplicaciones no responde a ping ni por consola remota. El resto del cluster funciona normal.",
+      "expected_category": "Infraestructura",
+      "expected_priority": "Alta",
+      "nota": "Nodo caído. Trampa: afecta a las apps que aloja, pero la causa es la plataforma, no el código."
+    },
+    {
+      "id": "GD-16",
+      "user_input": "La CPU del servidor de reportes se mantiene al 95% durante el cierre de mes. Los reportes salen, solo tardan el triple. No hubo cambios de código.",
+      "expected_category": "Infraestructura",
+      "expected_priority": "Media",
+      "nota": "Trampa clave: correlaciona con volumen, no con un deploy. Es capacidad, no bug."
+    },
+    {
+      "id": "GD-17",
+      "user_input": "El servicio de catálogo consume cada vez más memoria y hay que reiniciarlo cada dos días. Entre reinicios funciona bien.",
+      "expected_category": "Infraestructura",
+      "expected_priority": "Media",
+      "nota": "Degradación progresiva con workaround."
+    },
+    {
+      "id": "GD-18",
+      "user_input": "El job de backup nocturno ahora tarda seis horas en vez de dos, pero termina correctamente y los respaldos se verifican bien.",
+      "expected_category": "Infraestructura",
+      "expected_priority": "Baja",
+      "nota": "Sin pérdida de funcionalidad ni riesgo: el backup se completa."
+    },
+
+    {
+      "id": "GD-19",
+      "user_input": "La sucursal norte quedó sin acceso a ningún sistema. Son 40 personas y desde la casa central todo se ve funcionando con normalidad.",
+      "expected_category": "Redes",
+      "expected_priority": "Alta",
+      "nota": "Trampa: una ubicación pierde varios sistemas a la vez mientras siguen operativos para los demás. Es el trayecto de red."
+    },
+    {
+      "id": "GD-20",
+      "user_input": "Nos quedamos sin Internet en toda la oficina central. Los equipos tienen IP local pero no hay salida a ningún sitio externo.",
+      "expected_category": "Redes",
+      "expected_priority": "Alta",
+      "nota": "Pérdida total de conectividad."
+    },
+    {
+      "id": "GD-21",
+      "user_input": "Los usuarios remotos no logran levantar el túnel VPN desde ayer. El cliente muestra error de autenticación. En la oficina trabajan sin problema.",
+      "expected_category": "Redes",
+      "expected_priority": "Media",
+      "nota": "Subconjunto de usuarios afectado."
+    },
+    {
+      "id": "GD-22",
+      "user_input": "Las transferencias de archivos dentro de la red interna están lentísimas y algunas aplicaciones dan timeout. El acceso a Internet va normal.",
+      "expected_category": "Redes",
+      "expected_priority": "Media",
+      "nota": "Degradación parcial en la LAN."
+    },
+    {
+      "id": "GD-23",
+      "user_input": "El DNS interno está tardando varios segundos en resolver los nombres de los servidores. Todo funciona, pero con demora al inicio de cada conexión.",
+      "expected_category": "Redes",
+      "expected_priority": "Media",
+      "nota": "Servicio degradado sin caída."
+    },
+    {
+      "id": "GD-24",
+      "user_input": "Un equipo del área de diseño tomó la IP 169.254.3.12 y no navega. Los demás equipos de esa sala están bien.",
+      "expected_category": "Redes",
+      "expected_priority": "Baja",
+      "nota": "Un solo usuario afectado."
+    },
+
+    {
+      "id": "GD-25",
+      "user_input": "Hay archivos cifrándose en tiempo real en dos estaciones de trabajo y apareció una nota de rescate en el escritorio.",
+      "expected_category": "Seguridad",
+      "expected_priority": "Alta",
+      "nota": "Malware ejecutándose ahora mismo."
+    },
+    {
+      "id": "GD-26",
+      "user_input": "La cuenta de un empleado de finanzas registró inicios de sesión desde tres países distintos en la última hora y se crearon reglas de reenvío en su correo.",
+      "expected_category": "Seguridad",
+      "expected_priority": "Alta",
+      "nota": "Cuenta comprometida con actividad en curso."
+    },
+    {
+      "id": "GD-27",
+      "user_input": "El DLP detectó que se subieron 2 GB de documentos del área legal a una cuenta personal de Drive esta madrugada.",
+      "expected_category": "Seguridad",
+      "expected_priority": "Alta",
+      "nota": "Exfiltración de datos confirmada."
+    },
+    {
+      "id": "GD-28",
+      "user_input": "El escaneo de vulnerabilidades reporta que tres servidores corren una versión de OpenSSL con un CVE crítico. No hay indicios de que se haya explotado.",
+      "expected_category": "Seguridad",
+      "expected_priority": "Media",
+      "nota": "Hallazgo real sin explotación activa: el prompt pide Media, no Alta."
+    },
+    {
+      "id": "GD-29",
+      "user_input": "Encontramos una regla de firewall que deja expuesto el puerto 3306 de la base de datos a Internet. Los logs no muestran conexiones externas.",
+      "expected_category": "Seguridad",
+      "expected_priority": "Media",
+      "nota": "Configuración incorrecta sin explotación detectada."
+    },
+    {
+      "id": "GD-30",
+      "user_input": "El WAF está bloqueando un goteo de intentos de fuerza bruta contra el portal de clientes. Ninguno tuvo éxito y el servicio no se ve afectado.",
+      "expected_category": "Seguridad",
+      "expected_priority": "Baja",
+      "nota": "Ataque contenido por los controles existentes, sin impacto. No elevar por reflejo."
+    }
+  ]
+}
