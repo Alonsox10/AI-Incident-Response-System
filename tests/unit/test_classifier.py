@@ -26,15 +26,16 @@ def test_classifies_backend_incident():
     with patch("agents.classifier_agent.llm_structured") as mock:
         mock.invoke.return_value = IncidentClassificationOutput(
             category="Error backend",
-            priority="High",
+            priority="Alta",
             possible_causes=["Timeout de conexión", "Memoria agotada"],
+            informacion_suficiente=True,
         )
 
         from agents.classifier_agent import classifier_agent
         result = classifier_agent(make_state())
 
     assert result["category"] == "Error backend"
-    assert result["priority"] == "High"
+    assert result["priority"] == "Alta"
     assert result["current_step"] == "classifier_done"
 
 
@@ -43,15 +44,16 @@ def test_classifies_security_incident():
     with patch("agents.classifier_agent.llm_structured") as mock:
         mock.invoke.return_value = IncidentClassificationOutput(
             category="Seguridad",
-            priority="High",
+            priority="Alta",
             possible_causes=["Acceso no autorizado", "Brute force attack"],
+            informacion_suficiente=True,
         )
 
         from agents.classifier_agent import classifier_agent
         result = classifier_agent(make_state("Detectamos acceso no autorizado al sistema"))
 
     assert result["category"] == "Seguridad"
-    assert result["priority"] == "High"
+    assert result["priority"] == "Alta"
     assert result["current_step"] == "classifier_done"
 
 
@@ -60,15 +62,16 @@ def test_classifies_infrastructure_incident():
     with patch("agents.classifier_agent.llm_structured") as mock:
         mock.invoke.return_value = IncidentClassificationOutput(
             category="Infraestructura",
-            priority="Medium",
+            priority="Media",
             possible_causes=["Disco lleno", "RAM agotada", "CPU al 100%"],
+            informacion_suficiente=True,
         )
 
         from agents.classifier_agent import classifier_agent
         result = classifier_agent(make_state("El servidor está muy lento"))
 
     assert result["category"] == "Infraestructura"
-    assert result["priority"] == "Medium"
+    assert result["priority"] == "Media"
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +83,9 @@ def test_returns_list_of_possible_causes():
     with patch("agents.classifier_agent.llm_structured") as mock:
         mock.invoke.return_value = IncidentClassificationOutput(
             category="Infraestructura",
-            priority="Medium",
+            priority="Media",
             possible_causes=["Disco lleno", "RAM agotada", "CPU al 100%"],
+            informacion_suficiente=True,
         )
 
         from agents.classifier_agent import classifier_agent
@@ -96,8 +100,9 @@ def test_always_sets_current_step_to_classifier_done():
     with patch("agents.classifier_agent.llm_structured") as mock:
         mock.invoke.return_value = IncidentClassificationOutput(
             category="Redes",
-            priority="Low",
+            priority="Baja",
             possible_causes=["DNS mal configurado"],
+            informacion_suficiente=True,
         )
 
         from agents.classifier_agent import classifier_agent
@@ -111,8 +116,9 @@ def test_returns_all_required_keys():
     with patch("agents.classifier_agent.llm_structured") as mock:
         mock.invoke.return_value = IncidentClassificationOutput(
             category="Error frontend",
-            priority="Low",
+            priority="Baja",
             possible_causes=["CSS roto"],
+            informacion_suficiente=True,
         )
 
         from agents.classifier_agent import classifier_agent
@@ -133,3 +139,56 @@ def test_raises_value_error_on_llm_failure():
         from agents.classifier_agent import classifier_agent
         with pytest.raises(ValueError, match="Ocurrió un error en el agente clasificador"):
             classifier_agent(make_state())
+
+
+# ---------------------------------------------------------------------------
+# Reporte sin síntoma accionable (informacion_suficiente = False)
+# ---------------------------------------------------------------------------
+
+def _salida_insuficiente():
+    """Lo que devuelve el LLM ante un mensaje vago: rellena los campos, pero los marca inútiles."""
+    return IncidentClassificationOutput(
+        category="Error backend",
+        priority="Media",
+        possible_causes=["Sin información suficiente"],
+        informacion_suficiente=False,
+    )
+
+
+def test_reporte_vago_termina_en_needs_detail():
+    """Sin síntoma accionable el workflow se detiene en needs_detail, no sigue a recomendación."""
+    with patch("agents.classifier_agent.llm_structured") as mock:
+        mock.invoke.return_value = _salida_insuficiente()
+
+        from agents.classifier_agent import classifier_agent
+        result = classifier_agent(make_state("algo no está funcionando bien"))
+
+    assert result["current_step"] == "needs_detail"
+
+
+def test_reporte_vago_no_persiste_categoria_ni_prioridad():
+    """
+    La etiqueta que el LLM inventó para cumplir el formato no debe llegar al estado:
+    guardarla registraría un incidente con una categoría fabricada.
+    """
+    with patch("agents.classifier_agent.llm_structured") as mock:
+        mock.invoke.return_value = _salida_insuficiente()
+
+        from agents.classifier_agent import classifier_agent
+        result = classifier_agent(make_state("hay un problema"))
+
+    assert "category" not in result
+    assert "priority" not in result
+    assert "possible_causes" not in result
+
+
+def test_reporte_vago_pide_detalle_al_usuario():
+    """La respuesta debe pedir más información en vez de diagnosticar."""
+    with patch("agents.classifier_agent.llm_structured") as mock:
+        mock.invoke.return_value = _salida_insuficiente()
+
+        from agents.classifier_agent import classifier_agent, PEDIR_DETALLE
+        result = classifier_agent(make_state("no anda nada"))
+
+    assert result["recommendations"] == PEDIR_DETALLE
+    assert result["messages"][0].content == PEDIR_DETALLE
