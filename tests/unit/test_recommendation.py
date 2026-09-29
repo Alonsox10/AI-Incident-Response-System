@@ -10,7 +10,7 @@ from unittest.mock import patch
 from langchain_core.messages import HumanMessage, AIMessage
 
 
-def make_state(user_input="El servidor está caído", category="Error backend", priority="High"):
+def make_state(user_input="El servidor está caído", category="Error backend", priority="Alta"):
     return {
         "messages": [HumanMessage(content=user_input)],
         "category": category,
@@ -83,7 +83,7 @@ def test_uses_category_and_priority_from_state():
         mock_llm.invoke.return_value = AIMessage(content="recomendación")
 
         from agents.recomendation_agent import recomendation_agent
-        recomendation_agent(make_state(category="Seguridad", priority="High"))
+        recomendation_agent(make_state(category="Seguridad", priority="Alta"))
 
     mock_llm.invoke.assert_called_once()
 
