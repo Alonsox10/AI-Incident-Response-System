@@ -29,7 +29,8 @@ python seed.py                 # idempotente: crea las tablas vectoriales, inges
 
 Variables de entorno en `.env`:
 - Requeridas: `OPENAI_API_KEY`, `POSTGRES_URL`.
-- Trazabilidad (opcionales): `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT`.
+- Observabilidad (opcionales): `LOG_JSON` (default `true`), `LOG_LEVEL`, `LLM_COSTO_ENTRADA_POR_1M` y `LLM_COSTO_SALIDA_POR_1M` (ambas 0 por defecto).
+- **LangSmith está desactivado** desde la Fase 0: las claves siguen en el `.env` comentadas. La trazabilidad la cubren ahora los logs JSON con `request_id` y las métricas de `/metrics`.
 - Umbrales del camino de FAQ (opcionales): `FAQ_HIGH_CONFIDENCE_THRESHOLD` (default 0.75) y `FAQ_ROUTING_THRESHOLD` (default 0.85). Ver la sección de arquitectura: están separados a propósito.
 
 **Gotcha al editar `docs/knowledge/faqs.md`:** `seed.py` es idempotente *a nivel de tabla* (`_faqs_ya_cargadas()` solo mira si `faqs` tiene filas), así que re-correrlo tras editar el archivo **no recarga nada**. Para aplicar cambios hay que vaciar la tabla primero: `TRUNCATE faqs;` y después `python seed.py`. Lo mismo aplica a los incidentes históricos.
@@ -39,6 +40,23 @@ Variables de entorno en `.env`:
 ```bash
 uvicorn main:app --reload      # http://127.0.0.1:8000, docs en /docs
 ```
+
+Endpoints de operación (Fase 0 del `PLAN_PRODUCCION.md`):
+
+| Ruta | Para qué |
+|---|---|
+| `GET /health` | Liveness. No toca dependencias a propósito: si fallara con Postgres caído, el orquestador reiniciaría el pod por un problema externo |
+| `GET /ready` | Readiness. Verifica Postgres y el grafo; **503** si alguno falla |
+| `GET /metrics` | Prometheus: latencia por nodo, duración de incidentes, tokens y errores |
+
+### Prueba de carga
+
+```bash
+./venv/Scripts/python.exe -m locust -f loadtest/locustfile.py --headless \
+  -u 10 -r 2 -t 90s --host http://127.0.0.1:8000 --csv loadtest/resultados/u10
+```
+
+**Gasta API real**: cada request dispara ~5-6 llamadas al LLM. Empezar corto. La línea base medida y el punto de saturación están en `docs/baseline-carga.md`; es la cifra contra la que se compara la Fase 1.
 
 ### Tests
 
@@ -145,10 +163,17 @@ Las tres usan similarity search por coseno con un umbral (`similarity_threshold=
 
 Cada agente lee su system prompt desde un `.md` en `prompt/` en cada invocación (no se cachean en memoria) — para cambiar el comportamiento de un agente, edita el `.md` correspondiente, no hace falta tocar el código Python del agente.
 
-### Convención de logging
+### Observabilidad
 
-Todos los agentes/tools usan `loguru` con prefijos identificando el componente: `[ORQUESTADOR]`, `[CLASIFICADOR]`, `[RECOMENDACION]`, `[FAQ]`, `[FAQ-LOADER]`, `[DB]`, `[RAG-KB]`, `[RAG-HIST]`. Se loguea duración de las llamadas al LLM/DB con `time.perf_counter()`.
+`service/observability.py` concentra las tres piezas, y se engancha **desde el borde** para no tocar la lógica de los agentes:
+
+- **Correlación**: un middleware en `main.py` asigna `request_id` por petición (respeta `X-Request-ID` si viene del cliente) y lo guarda en `contextvars`. El sink JSON de loguru lo inyecta en cada línea, junto con `session_id`. Un incidente produce ~25 líneas correlacionables de punta a punta.
+- **Métricas por nodo**: `medir_nodo` envuelve cada nodo al registrarlo en `graphs/incidente_graph.py`. Un solo punto de instrumentación que cubre también los nodos futuros — por eso no hay código de métricas dentro de los agentes.
+- **Tokens**: el callback `ContadorDeTokens` en `models/llm.py` los suma de todas las llamadas. El costo en USD solo se calcula si se configuran `LLM_COSTO_ENTRADA_POR_1M` y `LLM_COSTO_SALIDA_POR_1M`; por defecto valen 0 a propósito, porque una tarifa inventada produce un número que parece medido y no lo es.
+
+`LOG_JSON=false` devuelve la salida legible de siempre. Los tests y los scripts de evaluación no llaman a `configurar_logging()`, así que conservan el formato de texto.
+
+Todos los agentes/tools usan `loguru` con prefijos identificando el componente: `[ORQUESTADOR]`, `[CLASIFICADOR]`, `[RECOMENDACION]`, `[FAQ]`, `[FAQ-LOADER]`, `[NODO]`, `[DB]`, `[RAG-KB]`, `[RAG-HIST]`. Se loguea duración de las llamadas al LLM/DB con `time.perf_counter()`.
 
 Los logs son la forma más rápida de ver qué camino tomó una consulta: `[ORQUESTADOR] Decision: faq | match documentado=93%` indica que resolvió el pre-chequeo sin LLM, y `[FAQ] Coincidencia directa` que devolvió la respuesta almacenada sin generar texto.
 
-Si ves `Failed to POST .../runs/multipart ... 403` en cada corrida, es la `LANGSMITH_API_KEY` del `.env` rechazada: ensucia la salida pero no afecta ningún resultado. Se silencia quitando `LANGSMITH_TRACING` del `.env`.

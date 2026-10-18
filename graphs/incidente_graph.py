@@ -12,6 +12,7 @@ from graphs.router import router
 from agents.classifier_agent import classifier_agent
 from agents.faq_agent import faq_agent
 from database.vector_db import initialize_vector_tables
+from service.observability import medir_nodo
 from langchain_core.messages import AIMessage
 import os
 
@@ -32,11 +33,14 @@ if not URI:
 
 # Define los nodos del grafo y sus transiciones
 graph = StateGraph(IncidentState)
-graph.add_node("orchestrator", orchestrator_agent)
+# Cada nodo se registra envuelto en `medir_nodo`, que lo cronometra y cuenta sus
+# errores sin alterar su comportamiento. Se hace acá y no dentro de cada agente
+# para tener un solo punto de instrumentación que cubra también los nodos futuros.
+graph.add_node("orchestrator", medir_nodo("orchestrator", orchestrator_agent))
 graph.set_entry_point("orchestrator")
-graph.add_node("classifier", classifier_agent)
-graph.add_node("recommendation", recomendation_agent)
-graph.add_node("faq", faq_agent)
+graph.add_node("classifier", medir_nodo("classifier", classifier_agent))
+graph.add_node("recommendation", medir_nodo("recommendation", recomendation_agent))
+graph.add_node("faq", medir_nodo("faq", faq_agent))
 
 # El ToolNode ahora incluye las dos herramientas RAG junto a las herramientas originales
 all_tools = [
