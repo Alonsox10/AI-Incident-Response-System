@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Sistema multiagente de respuesta a incidentes de TI con RAG, construido con LangGraph + FastAPI + PostgreSQL/pgvector. Un grafo de agentes clasifica un incidente reportado por el usuario, recupera contexto relevante (documentación técnica + incidentes históricos resueltos) vía búsqueda vectorial, y genera recomendaciones.
 
+## Antes de empezar: verifica que los archivos existan
+
+**El repo vive dentro de OneDrive y se han observado archivos desapareciendo solos**, repetidamente y sin que nadie los borre: `evaluation/` se perdió entera dos veces y `golden_dataset/README.md` dos veces más, incluso minutos después de haber verificado que estaban en disco. No hay hooks configurados y escribir por shell en esas carpetas funciona, así que el sospechoso es la sincronización.
+
+Consecuencias prácticas:
+
+- **Este documento puede describir archivos que hoy no están.** Si una ruta mencionada acá no existe, probablemente desapareció, no es que nunca se escribió. Compruébalo con `git log --diff-filter=D --name-only -3` y `git status` antes de concluir nada.
+- **Tras escribir un archivo nuevo, verifica que siga ahí** (`test -f`). Una escritura puede reportar éxito y el archivo no quedar.
+- **Commitear es la única protección real.** Lo que no está en git se pierde de verdad: `evaluation/run_flow_eval.py` y `flow_dataset.json` hubo que reconstruirlos desde cero porque nunca llegaron a un commit.
+
 ## Comandos
 
 ### Entorno
