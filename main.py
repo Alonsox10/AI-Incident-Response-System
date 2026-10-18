@@ -1,16 +1,86 @@
 from fastapi import FastAPI, HTTPException, Response, Request, UploadFile, File, Form
+from fastapi.responses import PlainTextResponse
 from graphs.incidente_graph import app as incident_app
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, AIMessage
 from loguru import logger
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from service.embedding_service import get_embedding, chunk_text
+from service.observability import (
+    INCIDENTES_TOTAL,
+    INCIDENTE_DURACION,
+    configurar_logging,
+    get_request_id,
+    set_request_context,
+)
+from database.db import get_connection
 from database.vector_db import store_document_chunk, store_incident_embedding
 from pypdf import PdfReader
 import io
 import uuid
 import time
 
+configurar_logging()
+
 app = FastAPI()
+
+
+# ─── Correlación de logs ──────────────────────────────────────────────────────
+
+@app.middleware("http")
+async def correlacionar_request(request: Request, call_next):
+    """
+    Asigna un request_id a cada petición y lo deja en el contexto para que todas
+    las líneas de log del workflow lo lleven. Si el cliente manda `X-Request-ID`
+    se respeta, para poder seguir una traza que empieza en otro servicio.
+    """
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    set_request_context(request_id, request.cookies.get("session_id") or "-")
+    respuesta = await call_next(request)
+    respuesta.headers["X-Request-ID"] = request_id
+    return respuesta
+
+
+# ─── Health y readiness ───────────────────────────────────────────────────────
+
+@app.get("/health")
+def health():
+    """
+    Liveness: ¿el proceso está vivo? No toca ninguna dependencia a propósito —
+    si fallara cuando Postgres se cae, el orquestador reiniciaría el pod por un
+    problema que no está en el pod.
+    """
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready(response: Response):
+    """
+    Readiness: ¿puede atender tráfico? Verifica lo que un request necesita de verdad,
+    que es Postgres (checkpointer + RAG) y el grafo compilado. Devuelve 503 si no,
+    para que el balanceador deje de enrutar en vez de acumular errores.
+    """
+    checks = {"grafo": incident_app is not None, "postgres": False}
+    try:
+        conexion = get_connection()
+        try:
+            conexion.execute("SELECT 1").fetchone()
+            checks["postgres"] = True
+        finally:
+            conexion.close()
+    except Exception as e:
+        logger.warning(f"[READY] Postgres no disponible: {e}")
+
+    listo = all(checks.values())
+    if not listo:
+        response.status_code = 503
+    return {"status": "ready" if listo else "not_ready", "checks": checks}
+
+
+@app.get("/metrics")
+def metrics():
+    """Métricas en formato Prometheus: latencia por nodo, incidentes, tokens y errores."""
+    return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 # ─── Modelos de request / response ───────────────────────────────────────────
@@ -53,6 +123,9 @@ def _ensure_session(requests: Request, response: Response) -> str:
 def handle_incident(request: IncidentRequest, requests: Request, response: Response):
     try:
         session_id = _ensure_session(requests, response)
+        # El session_id puede haberse creado recién acá, así que se refresca el
+        # contexto: sin esto, los logs del primer turno saldrían con session_id="-"
+        set_request_context(get_request_id(), session_id)
         config = _get_config(session_id)
 
         # Detectar si ya existe conversación previa para esta sesión
@@ -85,6 +158,8 @@ def handle_incident(request: IncidentRequest, requests: Request, response: Respo
         inicio = time.perf_counter()
         result = incident_app.invoke(input_state, config=config)
         duracion = time.perf_counter() - inicio
+        INCIDENTE_DURACION.observe(duracion)
+        INCIDENTES_TOTAL.labels(resultado="ok" if result else "error").inc()
 
         if not result:
             return {"error": "No se pudo procesar el incidente"}
@@ -105,6 +180,7 @@ def handle_incident(request: IncidentRequest, requests: Request, response: Respo
             "current_step": result.get("current_step"),
         }
     except Exception as e:
+        INCIDENTES_TOTAL.labels(resultado="error").inc()
         logger.error(f"Hubo un error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
