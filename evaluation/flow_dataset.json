@@ -1,0 +1,186 @@
+{
+  "description": "Dataset de evaluación de FLUJO (complementa eval_dataset.json, que mide calidad de contenido). 20 casos que verifican que el grafo se recorra como fue diseñado: que el orquestador enrute al agente correcto, que el agente de recomendación invoque las tools esperadas, que el RAG devuelva contexto cuando debería, y que el agente de FAQ tome la rama correcta. Incluye a propósito los casos ambiguos conocidos (preguntas con forma interrogativa que describen síntomas activos) y un caso fuera del dominio del RAG.",
+  "cases": [
+    {
+      "id": "FL-01",
+      "grupo": "faq_documentada",
+      "user_input": "¿Cómo desbloqueo una cuenta de usuario en Active Directory?",
+      "expected_route": "faq",
+      "expected_faq_branch": "alta_confianza",
+      "nota": "Verbatim del faqs.md. Debe resolverse por el pre-chequeo determinístico, sin llamada al LLM."
+    },
+    {
+      "id": "FL-02",
+      "grupo": "faq_documentada",
+      "user_input": "¿Cuál es el procedimiento ante una infección por ransomware?",
+      "expected_route": "faq",
+      "expected_faq_branch": "alta_confianza",
+      "nota": "Verbatim del faqs.md, categoría Seguridad."
+    },
+    {
+      "id": "FL-03",
+      "grupo": "faq_documentada",
+      "user_input": "¿Qué reviso cuando el pipeline de CI/CD falla?",
+      "expected_route": "faq",
+      "expected_faq_branch": "alta_confianza",
+      "nota": "Verbatim del faqs.md, categoría Cloud."
+    },
+    {
+      "id": "FL-04",
+      "grupo": "faq_parafraseada",
+      "user_input": "como se hace para desbloquear a alguien que no puede loguearse",
+      "expected_route": "faq",
+      "expected_faq_branch": "baja_confianza",
+      "nota": "Parafraseo coloquial (~53% similitud). Entra por el criterio del LLM, no por el pre-chequeo."
+    },
+    {
+      "id": "FL-05",
+      "grupo": "faq_parafraseada",
+      "user_input": "que se hace cuando entra un virus que encripta todos los archivos",
+      "expected_route": "faq",
+      "expected_faq_branch": "baja_confianza",
+      "nota": "Parafraseo que requiere conectar 'virus que encripta' con 'ransomware'."
+    },
+    {
+      "id": "FL-06",
+      "grupo": "faq_parafraseada",
+      "user_input": "que pasos hay que seguir si la impresora no saca nada",
+      "expected_route": "faq",
+      "expected_faq_branch": "baja_confianza",
+      "nota": "Redacción coloquial condicional."
+    },
+    {
+      "id": "FL-07",
+      "grupo": "faq_parafraseada",
+      "user_input": "como se arregla cuando alguien no puede conectarse por vpn desde su casa",
+      "expected_route": "faq",
+      "expected_faq_branch": "baja_confianza",
+      "nota": "Pregunta sobre un tercero, no sobre el propio usuario: no es síntoma activo propio."
+    },
+    {
+      "id": "FL-08",
+      "grupo": "faq_fuera_de_dominio",
+      "user_input": "¿Cuál es la política de vacaciones y cómo pido días libres?",
+      "expected_route": "faq",
+      "expected_faq_branch": "sin_resultados",
+      "nota": "Fuera del dominio de TI. Debe admitir que no está documentado, sin inventar una política."
+    },
+    {
+      "id": "FL-09",
+      "grupo": "incidente",
+      "user_input": "El endpoint /api/v1/pagos devuelve error 500 en todas las peticiones desde hace 20 minutos, justo después de un deploy a producción.",
+      "expected_route": "classifier",
+      "expected_category": "Error backend",
+      "expected_tools": ["search_knowledge_base_rag", "search_similar_incidents_rag", "insert_incident"],
+      "expected_rag_hit": true,
+      "nota": "Incidente activo clásico. El PDF documenta HTTP 500 tras deployment."
+    },
+    {
+      "id": "FL-10",
+      "grupo": "incidente",
+      "user_input": "Se cayó el enlace de fibra de la sucursal norte y quedaron 40 personas sin servicio.",
+      "expected_route": "classifier",
+      "expected_category": "Redes",
+      "expected_tools": ["search_knowledge_base_rag", "search_similar_incidents_rag", "insert_incident"],
+      "expected_rag_hit": true,
+      "nota": "Hay incidente histórico de caída de enlace WAN."
+    },
+    {
+      "id": "FL-11",
+      "grupo": "incidente",
+      "user_input": "Detectamos tráfico saliente anómalo hacia una IP desconocida desde el servidor de facturación.",
+      "expected_route": "classifier",
+      "expected_category": "Seguridad",
+      "expected_tools": ["search_knowledge_base_rag", "search_similar_incidents_rag", "insert_incident"],
+      "expected_rag_hit": true,
+      "nota": "Seguridad: el prompt exige sugerir aislamiento y auditoría inmediata."
+    },
+    {
+      "id": "FL-12",
+      "grupo": "incidente",
+      "user_input": "La aplicación móvil crashea al abrir el módulo de reportes en Android 14, pasó desde la última release.",
+      "expected_route": "classifier",
+      "expected_category": null,
+      "expected_tools": ["search_knowledge_base_rag", "search_similar_incidents_rag", "insert_incident"],
+      "expected_rag_hit": false,
+      "nota": "Categoría libre. El RAG probablemente no tenga contexto de apps móviles: mide si declara el fallback."
+    },
+    {
+      "id": "FL-13",
+      "grupo": "incidente",
+      "user_input": "El servidor de base de datos se quedó sin espacio en disco y los servicios empezaron a fallar hace 10 minutos.",
+      "expected_route": "classifier",
+      "expected_category": "Infraestructura",
+      "expected_tools": ["search_knowledge_base_rag", "search_similar_incidents_rag", "insert_incident"],
+      "expected_rag_hit": true,
+      "nota": "Documentado tanto en el PDF como en incidentes históricos."
+    },
+    {
+      "id": "FL-14",
+      "grupo": "incidente",
+      "user_input": "Las consultas a la base de datos están tardando más de 30 segundos y los usuarios reportan timeouts.",
+      "expected_route": "classifier",
+      "expected_category": null,
+      "expected_tools": ["search_knowledge_base_rag", "search_similar_incidents_rag", "insert_incident"],
+      "expected_rag_hit": true,
+      "nota": "Síntoma activo sobre un tema que también está documentado como FAQ: mide que gane el criterio de incidente."
+    },
+    {
+      "id": "FL-15",
+      "grupo": "incidente",
+      "user_input": "Desde ayer no llega ningún correo externo, los mensajes quedan en cola.",
+      "expected_route": "classifier",
+      "expected_category": null,
+      "expected_tools": ["search_knowledge_base_rag", "search_similar_incidents_rag", "insert_incident"],
+      "expected_rag_hit": true,
+      "nota": "Documentado en el PDF (INC-APP-003)."
+    },
+    {
+      "id": "FL-16",
+      "grupo": "incidente_ambiguo",
+      "user_input": "¿Por qué no puedo entrar a mi cuenta? Me dice que está bloqueada.",
+      "expected_route": "classifier",
+      "expected_category": null,
+      "expected_tools": ["search_knowledge_base_rag", "search_similar_incidents_rag", "insert_incident"],
+      "expected_rag_hit": true,
+      "nota": "Caso trampa: forma de pregunta pero síntoma activo. Mismo tema que FL-01, que sí va a FAQ."
+    },
+    {
+      "id": "FL-17",
+      "grupo": "incidente_ambiguo",
+      "user_input": "La red está lentísima ahora mismo, no puedo ni cargar el correo.",
+      "expected_route": "classifier",
+      "expected_category": null,
+      "expected_tools": ["search_knowledge_base_rag", "search_similar_incidents_rag", "insert_incident"],
+      "expected_rag_hit": true,
+      "nota": "Síntoma activo sobre tema documentado como FAQ."
+    },
+    {
+      "id": "FL-18",
+      "grupo": "incidente_fuera_de_rag",
+      "user_input": "El cluster de Kafka pierde mensajes en el topic de auditoría cuando el consumer group hace rebalance con la estrategia cooperative-sticky.",
+      "expected_route": "classifier",
+      "expected_category": null,
+      "expected_tools": ["search_knowledge_base_rag", "search_similar_incidents_rag", "insert_incident"],
+      "expected_rag_hit": false,
+      "nota": "Fuera del dominio del RAG. Debe responder con conocimiento propio y declararlo explícitamente."
+    },
+    {
+      "id": "FL-19",
+      "grupo": "edge",
+      "user_input": "algo no está funcionando bien",
+      "expected_route": "classifier",
+      "expected_current_step": "needs_detail",
+      "expected_no_tools": true,
+      "nota": "Mensaje vago sin síntoma accionable. El clasificador debe marcarlo con informacion_suficiente=false, pedir detalle y terminar ahí: sin consultar el RAG y sin registrar incidente. Antes de ese cambio recuperaba 4 documentos y redactaba un diagnóstico inventado de error HTTP 500."
+    },
+    {
+      "id": "FL-20",
+      "grupo": "edge",
+      "user_input": "que reviso si la web tira error interno",
+      "expected_route": "faq",
+      "expected_faq_branch": "baja_confianza",
+      "nota": "Debilidad conocida: redacción procedimental condicional que el orquestador tendía a leer como síntoma activo. Se resolvió sumando ejemplos condicionales al criterio del prompt."
+    }
+  ]
+}
