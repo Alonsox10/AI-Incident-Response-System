@@ -16,6 +16,21 @@ Consecuencias prácticas:
 - **Tras escribir un archivo nuevo, verifica que siga ahí** (`test -f`). Una escritura puede reportar éxito y el archivo no quedar.
 - **Commitear es la única protección real.** Lo que no está en git se pierde de verdad: `evaluation/run_flow_eval.py` y `flow_dataset.json` hubo que reconstruirlos desde cero porque nunca llegaron a un commit.
 
+**La mitigación funcionó**: desde que todo se versionó (2026-10-17) no ha vuelto a desaparecer nada — verificado tres semanas después. Si creas un archivo que vale algo, commitéalo en el momento, no al final de la tarea.
+
+## El trabajo se rige por un plan de producción externo
+
+El repositorio se está llevando a producción siguiendo **`C:\Users\leonr\OneDrive\Desktop\Certificaciones\PLAN_PRODUCCION.md`** — fuera del repo, un nivel arriba. No se encuentra explorando el proyecto, así que **léelo antes de proponer cambios de arquitectura**: contiene una auditoría con 17 hallazgos clasificados por severidad y un plan en 5 fases.
+
+Su regla de operación es estricta y manda sobre cualquier iniciativa propia:
+
+- **Ninguna fase empieza sin el OK explícito del usuario, y ninguna se cierra sin otro OK.** No encadenar fases.
+- Antes de empezar, presentar qué archivos se tocan, qué cambia y qué riesgo tiene.
+- Un commit por fase como mínimo. Si algo obliga a salirse del alcance descrito, parar y consultar.
+- El documento tiene una sección **"Lo que NO se toca"**: estructura del grafo, taxonomía `Literal`, pre-chequeo de FAQ con sus dos umbrales, hermeticidad de los tests y el ground truth del golden dataset.
+
+Estado: la **Fase 0 está implementada** (observabilidad, `/health`, `/ready`, `/metrics`, línea base de carga) pero **el checklist del plan sigue marcándola pendiente** — le falta el OK de cierre del usuario. Las fases 1 a 4 no se han empezado.
+
 ## Comandos
 
 ### Entorno
@@ -26,6 +41,10 @@ python -m venv venv && venv\Scripts\activate   # Windows; source venv/bin/activa
 pip install -r requirements.txt
 python seed.py                 # idempotente: crea las tablas vectoriales, ingesta PDFs de docs/knowledge/, carga incidentes históricos y parsea faqs.md
 ```
+
+> **Hay dos PostgreSQL en esta máquina y el `docker compose` es una pista falsa.** El puerto 5432 lo sirve un **PostgreSQL 17 nativo de Windows** (servicio `postgresql-x64-17`), no el contenedor `pgvector/pgvector:pg16` del compose — y es el nativo el que tiene todos los datos. El contenedor puede estar `Up (healthy)` sin que nadie le hable: comprobado el 2026-11-07, con el contenedor arriba y `SHOW server_version` devolviendo `17.10`.
+>
+> Consecuencias: detener el contenedor **no** deja al agente sin base (una prueba de fallo controlado contra él da un falso verde), y quien siga estas instrucciones desde cero levantaría una base vacía distinta de la que tiene los datos. Verificar siempre con `SHOW server_version` a quién se está hablando antes de concluir nada sobre la base.
 
 Variables de entorno en `.env`:
 - Requeridas: `OPENAI_API_KEY`, `POSTGRES_URL`.
@@ -57,6 +76,13 @@ Endpoints de operación (Fase 0 del `PLAN_PRODUCCION.md`):
 ```
 
 **Gasta API real**: cada request dispara ~5-6 llamadas al LLM. Empezar corto. La línea base medida y el punto de saturación están en `docs/baseline-carga.md`; es la cifra contra la que se compara la Fase 1.
+
+**El techo actual no es del código, es la cuota del proveedor.** Medido: saturación entre 10 y 50 usuarios, 3,94 req/s y 29% de errores a 50 — y esos errores son **429 de OpenAI por tokens por minuto**, no agotamiento de hilos ni de conexiones. La cuenta sale exacta: 2.000.000 TPM ÷ ~8.900 tokens por incidente ≈ 3,7 req/s.
+
+Dos cosas se siguen de ahí, y conviene tenerlas presentes antes de medir cualquier fase:
+
+- **Hacer el código async no sube ese techo.** Para pasarlo hay que bajar tokens por incidente (el 92% son de entrada: historial + contexto RAG en cada llamada) o pedir más cuota. Eso convierte la Fase 3 en una mejora de *capacidad*, no solo de costo.
+- El criterio de aceptación de la Fase 1 dice que si el throughput no mejora "algo quedó síncrono". Con esta evidencia esa inferencia ya no es válida: podría no mejorar por la cuota. Medir concurrencia en vuelo y p95 en vez de throughput bruto, o resolver A1 (reintentos ante 429) antes.
 
 ### Tests
 
@@ -144,7 +170,13 @@ Al agregar un agente nuevo al grafo: no lo conectes directamente a otro agente d
 
 Para cambiar la taxonomía hay que tocar tres sitios a la vez, o el sistema queda incoherente: el `Literal` en `schemas/models.py`, las categorías y criterios de prioridad en `prompt/classify_agent.md`, y los casos de `golden_dataset/incidents.json` (que declara la taxonomía vigente en su bloque `taxonomia`).
 
-**Estado conocido (2026-09-28):** el clasificador acierta la categoría 30/30 pero la prioridad 26/30, y los 4 fallos son el mismo patrón — casos `Baja` que eleva a `Media`, nunca al revés. La causa está en `prompt/classify_agent.md`: los criterios de `Media` ("afecta a un subconjunto de usuarios") y `Baja` ("afecta a muy pocos usuarios") se solapan, y el único ejemplo de `Baja` del prompt es cosmético (estilos CSS), así que el modelo no tiene de dónde inferir que un caso funcional con un solo usuario afectado también es `Baja`. Si corres el golden dataset y ves 26/30 en prioridad, es esto y no una regresión nueva.
+**Estado conocido:** el clasificador acierta la categoría **30/30** de forma estable. La prioridad oscila entre **26/30 y 25/30**, y los fallos son siempre el mismo patrón — casos `Baja` que eleva a `Media`, nunca al revés. La causa está en `prompt/classify_agent.md`: los criterios de `Media` ("afecta a un subconjunto de usuarios") y `Baja` ("afecta a muy pocos usuarios") se solapan, y el único ejemplo de `Baja` del prompt es cosmético (estilos CSS), así que el modelo no tiene de dónde inferir que un caso funcional con un solo usuario afectado también es `Baja`. Corregirlo es la tarea 3 de la Fase 3.
+
+Si ves 26/30 o 25/30 con esos casos, es esto y **no** una regresión nueva.
+
+> **La línea base no es perfectamente determinista, aunque la temperatura sea 0.** El 2026-09-28 fallaban GD-06, GD-18, GD-24 y GD-30 (26/30). El 2026-10-17 se sumó **GD-21** (VPN de usuarios remotos), que pasó de `Media` a `Alta`. Se verificó que **no lo causó ningún cambio del repo**: reproducido 3/3 con un `ChatOpenAI` limpio, sin la instrumentación añadida. Es deriva del proveedor en un caso genuinamente fronterizo.
+>
+> Implicación al evaluar un cambio: una diferencia de **un solo caso** en prioridad no prueba una regresión. Antes de atribuirla al código, reproducirla contra el estado anterior. Lo que sí es señal es un cambio en categoría (100% estable) o varios casos moviéndose a la vez.
 
 ### Persistencia de conversación
 

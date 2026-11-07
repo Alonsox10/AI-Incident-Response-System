@@ -44,10 +44,26 @@ Los 104 errores no son de base de datos ni de agotamiento de hilos. Son **429 de
 | Clasificador | 8 |
 | Orquestador | 1 |
 
+El mensaje completo identifica la causa exacta:
+
 ```
-Error en el agente de recomendación: Error code: 429 -
-{'error': {'message': 'Rate limit reached for gpt-4o-mini ...'}}
+Error code: 429 - Rate limit reached for gpt-4o-mini in organization org-… on
+tokens per min (TPM): Limit 2000000, Used 1992384, Requested 12080.
+Please try again in 133ms.          code: 'rate_limit_exceeded', type: 'tokens'
 ```
+
+**No es falta de saldo.** Es `rate_limit_exceeded` sobre el presupuesto de **tokens por minuto**, no `insufficient_quota`. La cuenta tiene un límite de **2.000.000 TPM** y lo estábamos consumiendo al 99,6%.
+
+La aritmética cierra con lo medido en `/metrics`: **~8.900 tokens por incidente** (8.182 de entrada + 688 de salida).
+
+| Prueba | Throughput | Tokens/min | % de la cuota | Fallos |
+|---|---:|---:|---:|---:|
+| 10 usuarios | 0,87 req/s | ~463.000 | 23% | 0% |
+| 50 usuarios | 3,94 req/s | ~2.100.000 | **105%** | 29% |
+
+El techo teórico es `2.000.000 ÷ 8.900 ≈ 3,7 req/s`, y medimos 3,94. La cuota y el techo de los 40 hilos coinciden por casualidad alrededor de 4 req/s.
+
+**Y los 429 eran recuperables**: OpenAI pedía esperar entre **45 y 133 ms**. Un backoff trivial habría absorbido los 104 fallos sin que ningún usuario se enterara. No son 104 peticiones imposibles, son 104 que nadie reintentó.
 
 Tres consecuencias para el plan:
 
