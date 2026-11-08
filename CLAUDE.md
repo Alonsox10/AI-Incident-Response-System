@@ -33,6 +33,17 @@ Estado: la **Fase 0 está implementada** (observabilidad, `/health`, `/ready`, `
 
 ## Comandos
 
+> **Todos los comandos de abajo asumen el venv activado.** Si no lo está, `python`
+> resuelve al Python del sistema, que no tiene las dependencias, y el error es
+> `ModuleNotFoundError: No module named 'prometheus_client'` (o `psycopg_pool`, o lo que
+> toque primero). No significa que falte instalar nada: significa que se está usando el
+> intérprete equivocado.
+>
+> ```bash
+> venv\Scripts\activate                      # y después: python run.py
+> ./venv/Scripts/python.exe run.py           # o invocar el intérprete directo, sin activar
+> ```
+
 ### Entorno
 
 ```bash
@@ -103,8 +114,6 @@ pytest tests/unit/test_classifier.py      # un solo archivo
 pytest tests/unit/test_classifier.py::test_nombre_del_test   # un solo test
 pytest tests/integration                  # solo integración
 ```
-
-En Windows, con el venv sin activar, invocar el intérprete directo: `./venv/Scripts/python.exe -m pytest -q`. Lo mismo para los scripts de `evaluation/` y `golden_dataset/` — usan dependencias que solo están en el venv.
 
 **La suite es hermética y debe seguir siéndolo.** `tests/conftest.py` hace dos cosas, en este orden exacto, antes de cualquier import de LangChain/OpenAI:
 
