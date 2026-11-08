@@ -57,8 +57,19 @@ Variables de entorno en `.env`:
 ### Correr la app
 
 ```bash
-uvicorn main:app --reload      # http://127.0.0.1:8000, docs en /docs
+python scripts/migrate.py      # aplica el esquema; paso previo, no corre solo al arrancar
+python run.py                  # http://127.0.0.1:8000, docs en /docs
 ```
+
+> **En Windows hay que usar `run.py`, no `uvicorn main:app`.** Desde la Fase 1 el acceso a
+> Postgres es asíncrono, y psycopg no puede trabajar sobre el `ProactorEventLoop` que
+> uvicorn impone en win32 pasándolo como `loop_factory` —lo que ignora cualquier
+> `set_event_loop_policy`—. El síntoma es que el servicio arranca pero `/ready` devuelve
+> 503 para siempre con `postgres: false`. `run.py` fuerza un `SelectorEventLoop`.
+>
+> En Linux (Docker, producción) `uvicorn main:app` sigue siendo válido. `python run.py
+> --reload` también avisa y degrada, porque el recargador arranca cada worker por su
+> cuenta y ahí no se puede imponer el loop.
 
 Endpoints de operación (Fase 0 del `PLAN_PRODUCCION.md`):
 
@@ -182,9 +193,33 @@ Si ves 26/30 o 25/30 con esos casos, es esto y **no** una regresión nueva.
 
 El estado (`state/state.py::IncidentState`, extiende `MessagesState` de LangGraph) se persiste completo por sesión vía `PostgresSaver`. En una conversación nueva se manda el estado completo; en una continuación solo se manda el nuevo `HumanMessage` (el reducer `add_messages` lo concatena) y se resetea `current_step=None` para forzar una nueva pasada de clasificación.
 
+### Concurrencia y conexiones
+
+Desde la Fase 1 **todo el camino de un request es asíncrono**, y es todo o nada: un solo
+nodo síncrono haría que LangGraph lo delegara al threadpool de AnyIO y reintroduciría el
+techo de ~40 concurrentes. Para que eso no se cuele en silencio, `medir_nodo` **lanza
+`TypeError` si se le pasa un nodo que no sea `async def`**.
+
+Lo mismo vale para las tools: las ejecuta el `ToolNode`, así que las cuatro son `async`.
+
+- **Pool único** (`database/db.py`), creado de forma perezosa y abierto por el `lifespan`.
+  Nada conecta al importar: por eso el grafo ya se puede importar y testear sin
+  infraestructura, y el proceso arranca aunque Postgres no esté.
+- `graphs/incidente_graph.py` define el grafo al importar pero lo **compila en
+  `iniciar_grafo()`**, con `AsyncPostgresSaver` sobre ese mismo pool. Se obtiene con
+  `get_app()`, que falla con un mensaje claro si nadie lo inicializó.
+- **El esquema no se aplica en runtime**: lo hace `scripts/migrate.py`, que registra cada
+  `.sql` en `schema_migrations`. Corren en **orden alfabético**, así que cada migración
+  debe bastarse sola — por eso `faq_schema.sql` repite su `CREATE EXTENSION vector`.
+
+> Si `get_pool()` falla, el pool **no** queda registrado. psycopg cierra el pool cuando
+> `open()` agota el timeout, y conservar esa referencia dejaba el proceso muerto para
+> siempre con "the pool is already closed". Descartarlo es lo que permite que el servicio
+> se recupere solo cuando la base vuelve.
+
 ### RAG y tools
 
-Tres tablas vectoriales en pgvector (`database/vector_db.py`; esquemas en `db/vector_schema.sql` y `db/faq_schema.sql`, concatenados y ejecutados en ese orden por `initialize_vector_tables()`, que corre al importar `graphs/incidente_graph.py`). El orden importa: `CREATE EXTENSION vector` vive solo en `vector_schema.sql`, así que `faq_schema.sql` no es autosuficiente contra una base limpia.
+Tres tablas vectoriales en pgvector (`database/vector_db.py`; esquemas en `db/vector_schema.sql` y `db/faq_schema.sql`, aplicados por `scripts/migrate.py`).
 - `knowledge_base` — chunks de PDFs ingeridos vía `/documents/ingest/pdf` o `seed.py` (docs en `docs/knowledge/`). Es la única fragmentada; una fila = un chunk.
 - `incident_embeddings` — incidentes históricos resueltos, agregables vía `/incidents/historical`. Una fila = un caso completo.
 - `faqs` — preguntas frecuentes. Una fila = un caso completo. Se pueblan parseando `docs/knowledge/faqs.md` con `service/faq_loader.py` (parseo estructural exacto sobre una convención Markdown documentada en el propio archivo — sin heurísticas ni LLM).
