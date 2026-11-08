@@ -143,6 +143,58 @@ porque fracasaba. Ahora se completan todos, y completarse cuesta ~15 s.
 
 **La métrica honesta aquí es la tasa de error**, y cayó de 29,4% a 1,5%.
 
+## Prueba de estrés — 100 usuarios, 2026-11-07
+
+La prueba anterior se quedaba corta: con 50 usuarios apenas se supera el límite de 40
+hilos de la versión síncrona, así que no distinguía una mejora real de una casualidad.
+Esta sube a 100 y mide **otra cosa**: si el event loop sigue vivo bajo sobrecarga.
+
+| Métrica | Resultado |
+|---|---:|
+| Requests | 602 en 70 s |
+| Throughput bruto | 8,60 req/s |
+| Throughput útil (sin fallos) | **4,09 req/s** |
+| p50 / p95 | 12 s / 18 s |
+| Fallos | 316 (52,5%) |
+| Servidor tras la prueba | **vivo**, `/ready` 200 |
+
+### La medición que importa: `/health` bajo carga
+
+Durante los 70 segundos se sondeó `/health` y `/ready` una vez por segundo:
+
+| Endpoint | Sin carga | Con 100 usuarios encima |
+|---|---:|---:|
+| `/health` | 8 ms mediana | **18 ms mediana · 107 ms p95 · 139 ms máx · 0 fallos** |
+| `/ready` | 9 ms mediana | **15 ms mediana · 63 ms p95 · 122 ms máx · 58/58 OK** |
+
+**Esto es lo que demuestra que la conversión a async funcionó.** Con 100 workflows de
+~15 segundos en vuelo, una petición trivial sigue respondiendo en milisegundos: el event
+loop no está bloqueado. En la versión síncrona los 40 hilos de AnyIO estarían ocupados y
+`/health` tendría que hacer cola detrás de ellos — y en Kubernetes eso significa que el
+readiness probe falla y el orquestador reinicia un pod que estaba sano, solo ocupado.
+
+A diferencia del throughput, esta métrica **no depende de la cuota del proveedor**, así
+que sí sirve como criterio de la Fase 1.
+
+### De qué son los fallos
+
+| Causa | Errores |
+|---|---:|
+| 429 rate limit de OpenAI | **397** |
+| Base de datos | **0** |
+| Agotamiento del pool | **0** |
+
+24 conexiones abiertas a Postgres al terminar, con `max_size=20` por réplica: el pool se
+comportó como se esperaba y no hubo nada parecido al `too many clients` que describía B3.
+
+**El 52,5% de fallos es enteramente del proveedor.** La aplicación aguantó 100 usuarios
+concurrentes sin romperse; lo que no aguanta es la cuota de 2.000.000 TPM, que a ~8.900
+tokens por incidente da ~3,7 req/s y nosotros estábamos empujando 4,09 útiles.
+
+Dicho de otro modo: **el cuello de botella se movió del código a la factura**, que era
+exactamente el objetivo. Para subir de ahí hay dos caminos, ambos fuera de la Fase 1:
+pedir más cuota, o bajar los tokens por incidente (Fase 3).
+
 ## Lo que esta prueba NO demuestra
 
 No demuestra que el techo de concurrencia haya subido, y conviene decirlo claro:
