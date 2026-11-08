@@ -40,8 +40,8 @@ Estado: la **Fase 0 está implementada** (observabilidad, `/health`, `/ready`, `
 > intérprete equivocado.
 >
 > ```bash
-> venv\Scripts\activate                      # y después: python run.py
-> ./venv/Scripts/python.exe run.py           # o invocar el intérprete directo, sin activar
+> venv\Scripts\activate                          # y después, los comandos tal cual
+> ./venv/Scripts/python.exe -m uvicorn main:app  # o el intérprete directo, sin activar
 > ```
 
 ### Entorno
@@ -68,27 +68,25 @@ Variables de entorno en `.env`:
 ### Correr la app
 
 ```bash
-python scripts/migrate.py      # aplica el esquema; paso previo, no corre solo al arrancar
-python run.py                  # http://127.0.0.1:8000, docs en /docs
+python scripts/migrate.py                 # aplica el esquema; paso previo, no corre al arrancar
+
+# Linux / Docker
+uvicorn main:app --reload
+
+# Windows: hay que pasarle el loop
+uvicorn main:app --reload --loop asyncio:SelectorEventLoop
 ```
 
-> **En Windows hay que usar `run.py`, no `uvicorn main:app`.** Desde la Fase 1 el acceso a
-> Postgres es asíncrono, y psycopg no puede trabajar sobre el `ProactorEventLoop` que
-> uvicorn impone en win32 pasándolo como `loop_factory` —lo que ignora cualquier
-> `set_event_loop_policy`—. El síntoma es que el servicio arranca pero `/ready` devuelve
-> 503 para siempre con `postgres: false`. `run.py` fuerza un `SelectorEventLoop`.
+> **En Windows el flag `--loop` no es opcional.** Desde la Fase 1 el acceso a Postgres es
+> asíncrono y psycopg no puede trabajar sobre el `ProactorEventLoop`, que es el que uvicorn
+> impone en win32 pasándolo como `loop_factory` — lo que ignora cualquier
+> `set_event_loop_policy`. El síntoma es traicionero: **el servicio arranca sin error
+> aparente y `/ready` devuelve 503 para siempre** con `postgres: false`.
 >
-> En Linux (Docker, producción) `uvicorn main:app` sigue siendo válido. `python run.py
-> --reload` también avisa y degrada, porque el recargador arranca cada worker por su
-> cuenta y ahí no se puede imponer el loop.
-
-Endpoints de operación (Fase 0 del `PLAN_PRODUCCION.md`):
-
-| Ruta | Para qué |
-|---|---|
-| `GET /health` | Liveness. No toca dependencias a propósito: si fallara con Postgres caído, el orquestador reiniciaría el pod por un problema externo |
-| `GET /ready` | Readiness. Verifica Postgres y el grafo; **503** si alguno falla |
-| `GET /metrics` | Prometheus: latencia por nodo, duración de incidentes, tokens y errores |
+> `--loop` acepta cualquier import string además de sus valores conocidos
+> (`uvicorn/config.py::get_loop_factory`), así que se le pasa la clase del loop
+> directamente. Funciona también con `--reload`. En Linux no hace falta: ahí uvicorn ya
+> elige un `SelectorEventLoop`.
 
 ### Prueba de carga
 
