@@ -157,21 +157,49 @@ Salida esperada:
 
 ## 6. Iniciar la aplicacion
 
-El comando **no es el mismo en Linux que en Windows**:
+El comando **no es el mismo en Linux que en Windows**. Se invoca el interprete del venv de forma explicita, que es la forma que no puede fallar:
 
 ```bash
 # Linux / Mac / Docker
-uvicorn main:app --reload
+./venv/bin/python -m uvicorn main:app --reload
 ```
 
 ```bash
 # Windows
-uvicorn main:app --reload --loop asyncio:SelectorEventLoop
+./venv/Scripts/python.exe -m uvicorn main:app --reload --loop asyncio:SelectorEventLoop
 ```
+
+Con el venv **activado** basta con `uvicorn main:app --reload [--loop ...]`, pero ojo: si no lo esta, `uvicorn` resuelve al del Python del sistema y el error que sale es desconcertante. Ver la seccion siguiente.
 
 La API queda disponible en `http://127.0.0.1:8000`.
 
 Documentacion interactiva (Swagger): `http://127.0.0.1:8000/docs`
+
+### Si sale `ModuleNotFoundError: No module named 'prometheus_client'`
+
+No falta ninguna dependencia: **se esta usando el `uvicorn` del Python del sistema en vez del que esta en el venv**. Se reconoce mirando las rutas del traceback:
+
+```
+File "C:\Users\...\Programs\Python\Python314\Lib\site-packages\uvicorn\server.py"
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  no dice venv
+```
+
+Es confuso porque el Python del sistema suele tener `uvicorn`, `fastapi` y `psycopg_pool` instalados de antes, asi que la app arranca, importa medio proyecto y falla al final en la unica que no esta. Parece un paquete ausente y es el interprete equivocado.
+
+Dos soluciones, cualquiera sirve:
+
+```bash
+venv\Scripts\activate          # y despues: uvicorn main:app --reload --loop ...
+./venv/Scripts/python.exe -m uvicorn main:app --reload --loop asyncio:SelectorEventLoop
+```
+
+Para confirmar cual se esta usando:
+
+```bash
+python -c "import sys; print(sys.executable)"
+```
+
+Si no imprime una ruta que termine en `venv\Scripts\python.exe`, el venv no esta activo.
 
 ### Por que Windows necesita el flag `--loop`
 
@@ -184,7 +212,7 @@ En Linux no hace falta porque alli uvicorn ya elige un `SelectorEventLoop`. Por 
 Si no quieres escribirlo cada vez, un alias lo resuelve sin tocar el repo:
 
 ```bash
-alias api='uvicorn main:app --reload --loop asyncio:SelectorEventLoop'
+alias api='./venv/Scripts/python.exe -m uvicorn main:app --reload --loop asyncio:SelectorEventLoop'
 ```
 
 ### Comprobar que arranco bien
@@ -277,10 +305,10 @@ docker compose down -v
 4. python -m venv venv && activar el venv && pip install -r requirements.txt
 5. python scripts/migrate.py
 6. python seed.py
-7. Arrancar:
-     Linux/Mac -> uvicorn main:app --reload
-     Windows   -> uvicorn main:app --reload --loop asyncio:SelectorEventLoop
+7. Arrancar (con el interprete del venv, que es lo que no falla):
+     Linux/Mac -> ./venv/bin/python -m uvicorn main:app --reload
+     Windows   -> ./venv/Scripts/python.exe -m uvicorn main:app --reload --loop asyncio:SelectorEventLoop
 8. Comprobar: curl http://127.0.0.1:8000/ready  ->  {"grafo":true,"postgres":true}
 ```
 
-**Activar el venv no es opcional.** Si no esta activo, `python` resuelve al interprete del sistema y los comandos fallan con `ModuleNotFoundError: No module named 'prometheus_client'` (o `psycopg_pool`). Parece que falta instalar algo, pero lo que falla es el interprete. Alternativa sin activarlo: invocarlo directo con `./venv/Scripts/python.exe <comando>`.
+**El venv no es opcional.** Si no esta activo, tanto `python` como `uvicorn` resuelven a los del sistema y todo falla con `ModuleNotFoundError: No module named 'prometheus_client'`. Parece que falta instalar algo, pero lo que falla es el interprete: el Python del sistema tiene `uvicorn`, `fastapi` y `psycopg_pool` de antes, y solo le falta ese paquete, asi que el error aparece tarde y despista. Por eso los comandos de arriba invocan el interprete del venv de forma explicita.

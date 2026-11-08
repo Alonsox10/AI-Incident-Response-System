@@ -71,11 +71,17 @@ Variables de entorno en `.env`:
 python scripts/migrate.py                 # aplica el esquema; paso previo, no corre al arrancar
 
 # Linux / Docker
-uvicorn main:app --reload
+./venv/bin/python -m uvicorn main:app --reload
 
 # Windows: hay que pasarle el loop
-uvicorn main:app --reload --loop asyncio:SelectorEventLoop
+./venv/Scripts/python.exe -m uvicorn main:app --reload --loop asyncio:SelectorEventLoop
 ```
+
+> Se invoca el intérprete del venv a propósito. Con el venv sin activar, `uvicorn` a secas
+> resuelve al del Python del sistema, que en esta máquina tiene `uvicorn`, `fastapi` y
+> `psycopg_pool` pero **no** `prometheus_client`: la app importa medio proyecto y falla al
+> final con un `ModuleNotFoundError` que parece una dependencia ausente y es el intérprete
+> equivocado. Se reconoce porque las rutas del traceback no pasan por `venv`.
 
 > **En Windows el flag `--loop` no es opcional.** Desde la Fase 1 el acceso a Postgres es
 > asíncrono y psycopg no puede trabajar sobre el `ProactorEventLoop`, que es el que uvicorn
