@@ -6,7 +6,7 @@ resuelve por una de tres ramas según la similitud del mejor candidato.
 Parcheamos `get_embedding`, `search_faqs` y `llm` tal como los importa el módulo del agente.
 """
 import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from langchain_core.messages import HumanMessage, AIMessage
 
 
@@ -33,16 +33,16 @@ def make_faq(similarity, question="¿Cómo desbloqueo una cuenta?", answer="Usar
 # Rama 1: sin resultados sobre el umbral mínimo
 # ---------------------------------------------------------------------------
 
-def test_sin_resultados_invita_a_describir_el_problema():
+async def test_sin_resultados_invita_a_describir_el_problema():
     """Sin candidatos, responde pidiendo más detalle y sin llamar al LLM."""
     with patch("agents.faq_agent.get_embedding", return_value=[0.0] * 1536), \
          patch("agents.faq_agent.search_faqs", return_value=[]), \
          patch("agents.faq_agent.llm") as mock_llm:
 
         from agents.faq_agent import faq_agent
-        result = faq_agent(make_state())
+        result = await faq_agent(make_state())
 
-    mock_llm.invoke.assert_not_called()
+    mock_llm.ainvoke.assert_not_called()
     assert "incidente" in result["recommendations"].lower()
     assert result["current_step"] == "faq_done"
 
@@ -51,7 +51,7 @@ def test_sin_resultados_invita_a_describir_el_problema():
 # Rama 2: alta confianza — respuesta almacenada, sin generación
 # ---------------------------------------------------------------------------
 
-def test_alta_confianza_devuelve_la_respuesta_almacenada_sin_llm():
+async def test_alta_confianza_devuelve_la_respuesta_almacenada_sin_llm():
     """Por encima del umbral, devuelve el answer tal cual y no invoca al LLM."""
     from agents.faq_agent import FAQ_HIGH_CONFIDENCE_THRESHOLD
 
@@ -62,9 +62,9 @@ def test_alta_confianza_devuelve_la_respuesta_almacenada_sin_llm():
          patch("agents.faq_agent.llm") as mock_llm:
 
         from agents.faq_agent import faq_agent
-        result = faq_agent(make_state())
+        result = await faq_agent(make_state())
 
-    mock_llm.invoke.assert_not_called()
+    mock_llm.ainvoke.assert_not_called()
     assert result["recommendations"] == "Ejecutar Unlock-ADAccount -Identity usuario."
     assert result["messages"][0].content == "Ejecutar Unlock-ADAccount -Identity usuario."
     assert result["current_step"] == "faq_done"
@@ -74,7 +74,7 @@ def test_alta_confianza_devuelve_la_respuesta_almacenada_sin_llm():
 # Rama 3: baja confianza — síntesis con una sola llamada al LLM
 # ---------------------------------------------------------------------------
 
-def test_baja_confianza_sintetiza_con_una_llamada_al_llm():
+async def test_baja_confianza_sintetiza_con_una_llamada_al_llm():
     """Con candidatos por debajo del umbral, hace exactamente una llamada al LLM."""
     from agents.faq_agent import FAQ_HIGH_CONFIDENCE_THRESHOLD
 
@@ -85,18 +85,19 @@ def test_baja_confianza_sintetiza_con_una_llamada_al_llm():
          patch("agents.faq_agent.search_faqs", return_value=[faq]), \
          patch("agents.faq_agent.llm") as mock_llm:
 
-        mock_llm.invoke.return_value = mock_response
+        mock_llm.ainvoke = AsyncMock()
+        mock_llm.ainvoke.return_value = mock_response
 
         from agents.faq_agent import faq_agent
-        result = faq_agent(make_state())
+        result = await faq_agent(make_state())
 
-    mock_llm.invoke.assert_called_once()
+    mock_llm.ainvoke.assert_called_once()
     assert result["recommendations"] == mock_response.content
     assert result["messages"][0] is mock_response
     assert result["current_step"] == "faq_done"
 
 
-def test_baja_confianza_pasa_los_candidatos_como_contexto():
+async def test_baja_confianza_pasa_los_candidatos_como_contexto():
     """Los candidatos recuperados deben llegar al LLM dentro del mensaje de contexto."""
     from agents.faq_agent import FAQ_HIGH_CONFIDENCE_THRESHOLD
 
@@ -106,12 +107,13 @@ def test_baja_confianza_pasa_los_candidatos_como_contexto():
          patch("agents.faq_agent.search_faqs", return_value=[faq]), \
          patch("agents.faq_agent.llm") as mock_llm:
 
-        mock_llm.invoke.return_value = AIMessage(content="respuesta")
+        mock_llm.ainvoke = AsyncMock()
+        mock_llm.ainvoke.return_value = AIMessage(content="respuesta")
 
         from agents.faq_agent import faq_agent
-        faq_agent(make_state())
+        await faq_agent(make_state())
 
-    mensajes_enviados = mock_llm.invoke.call_args[0][0]
+    mensajes_enviados = mock_llm.ainvoke.call_args[0][0]
     contexto = mensajes_enviados[-1].content
     assert "Reiniciar el Print Spooler." in contexto
 
@@ -120,11 +122,11 @@ def test_baja_confianza_pasa_los_candidatos_como_contexto():
 # Prueba de manejo de errores
 # ---------------------------------------------------------------------------
 
-def test_raises_value_error_on_search_failure():
+async def test_raises_value_error_on_search_failure():
     """Un fallo en la búsqueda debe convertirse en ValueError con mensaje descriptivo."""
     with patch("agents.faq_agent.get_embedding", return_value=[0.0] * 1536), \
          patch("agents.faq_agent.search_faqs", side_effect=Exception("DB connection failed")):
 
         from agents.faq_agent import faq_agent
         with pytest.raises(ValueError, match="Ocurrió un error en el agente de FAQs"):
-            faq_agent(make_state())
+            await faq_agent(make_state())

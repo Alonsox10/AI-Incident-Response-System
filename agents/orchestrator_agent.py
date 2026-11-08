@@ -17,7 +17,7 @@ llm_structured = llm.with_structured_output(OrquestatorOutput)
 FAQ_ROUTING_THRESHOLD = float(os.getenv("FAQ_ROUTING_THRESHOLD", "0.85"))
 
 
-def _coincide_con_faq_documentada(user_input: str) -> float | None:
+async def _coincide_con_faq_documentada(user_input: str) -> float | None:
     """
     Retorna la similitud del mejor match en la tabla faqs si supera FAQ_ROUTING_THRESHOLD,
     o None si no hay coincidencia suficiente.
@@ -25,13 +25,13 @@ def _coincide_con_faq_documentada(user_input: str) -> float | None:
     Sirve para no dejar la decisión de routing librada a la redacción del mensaje: si la
     pregunta ya está documentada, va a FAQ aunque esté formulada como síntoma activo.
     """
-    results = search_faqs(get_embedding(user_input), top_k=1)
+    results = await search_faqs(await get_embedding(user_input), top_k=1)
     if results and results[0]["similarity"] >= FAQ_ROUTING_THRESHOLD:
         return results[0]["similarity"]
     return None
 
 
-def orchestrator_agent(state: IncidentState):
+async def orchestrator_agent(state: IncidentState):
     try:
         messages      = state["messages"]
         user_input    = messages[-1].content
@@ -42,7 +42,7 @@ def orchestrator_agent(state: IncidentState):
 
         # Solo al inicio del workflow: una vez clasificado, el routing lo decide current_step
         if current_step is None:
-            similitud = _coincide_con_faq_documentada(user_input)
+            similitud = await _coincide_con_faq_documentada(user_input)
             if similitud is not None:
                 logger.info(f"[ORQUESTADOR] Decision: faq | match documentado={similitud:.0%} | sin llamada al LLM")
                 return {"next_agent": "faq"}
@@ -73,7 +73,7 @@ def orchestrator_agent(state: IncidentState):
             HumanMessage(content=f"Usuario: {user_input}\n{workflow_context}"),
         ]
 
-        response = llm_structured.invoke(message_state)
+        response = await llm_structured.ainvoke(message_state)
         logger.info(f"[ORQUESTADOR] Decision: {response.next_agent} | current_step={current_step} | categoria={category}")
         return {"next_agent": response.next_agent}
     except Exception as e:

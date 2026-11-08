@@ -8,12 +8,27 @@ load_dotenv(override=True)
 _embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
 
-def get_embedding(text: str) -> list[float]:
+async def get_embedding(text: str) -> list[float]:
     """Genera un embedding vectorial para el texto dado."""
     try:
-        return _embeddings.embed_query(text.replace("\n", " ").strip())
+        return await _embeddings.aembed_query(text.replace("\n", " ").strip())
     except Exception as e:
         logger.error(f"Error al generar el embedding: {e}")
+        raise
+
+
+async def get_embeddings_lote(textos: list[str]) -> list[list[float]]:
+    """
+    Vectoriza varios textos en una sola llamada.
+
+    La ingesta de PDF hacía una llamada por fragmento, en serie. Para un manual de
+    100 páginas eso son cientos de viajes de ida y vuelta; en lote es uno por tanda.
+    """
+    try:
+        limpios = [t.replace("\n", " ").strip() for t in textos]
+        return await _embeddings.aembed_documents(limpios)
+    except Exception as e:
+        logger.error(f"Error al generar los embeddings en lote: {e}")
         raise
 
 

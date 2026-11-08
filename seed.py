@@ -8,6 +8,7 @@ el entorno por primera vez. Es seguro ejecutarlo varias veces
 Uso:
     python seed.py
 """
+import asyncio
 import sys
 import os
 import io
@@ -20,7 +21,7 @@ load_dotenv(override=True)
 
 from loguru import logger
 from pypdf import PdfReader
-from database.db import get_connection
+from database.db import cerrar_pool, get_pool
 from database.vector_db import (
     initialize_vector_tables,
     store_document_chunk,
@@ -85,45 +86,42 @@ INCIDENTES_HISTORICOS = [
 
 # ─── Helpers de idempotencia ──────────────────────────────────────────────────
 
-def _fuente_ya_existe(source: str) -> bool:
+async def _fuente_ya_existe(source: str) -> bool:
     """Retorna True si ya hay chunks de esa fuente en knowledge_base."""
-    connection = get_connection()
-    try:
-        row = connection.execute(
+    pool = await get_pool()
+    async with pool.connection() as conexion:
+        cur = await conexion.execute(
             "SELECT COUNT(*) FROM knowledge_base WHERE source = %s", (source,)
-        ).fetchone()
-        return row[0] > 0
-    finally:
-        connection.close()
+        )
+        row = await cur.fetchone()
+    return row[0] > 0
 
 
-def _incidentes_ya_cargados() -> bool:
+async def _incidentes_ya_cargados() -> bool:
     """Retorna True si incident_embeddings ya tiene datos."""
-    connection = get_connection()
-    try:
-        row = connection.execute("SELECT COUNT(*) FROM incident_embeddings").fetchone()
-        return row[0] > 0
-    finally:
-        connection.close()
+    pool = await get_pool()
+    async with pool.connection() as conexion:
+        cur = await conexion.execute("SELECT COUNT(*) FROM incident_embeddings")
+        row = await cur.fetchone()
+    return row[0] > 0
 
 
-def _faqs_ya_cargadas() -> bool:
+async def _faqs_ya_cargadas() -> bool:
     """Retorna True si la tabla faqs ya tiene datos."""
-    connection = get_connection()
-    try:
-        row = connection.execute("SELECT COUNT(*) FROM faqs").fetchone()
-        return row[0] > 0
-    finally:
-        connection.close()
+    pool = await get_pool()
+    async with pool.connection() as conexion:
+        cur = await conexion.execute("SELECT COUNT(*) FROM faqs")
+        row = await cur.fetchone()
+    return row[0] > 0
 
 
 # ─── Ingesta de PDFs ──────────────────────────────────────────────────────────
 
-def ingestar_pdf(ruta: str) -> None:
+async def ingestar_pdf(ruta: str) -> None:
     """Lee un PDF, lo chunkea, lo vectoriza y lo almacena en knowledge_base."""
     source_name = os.path.basename(ruta)
 
-    if _fuente_ya_existe(source_name):
+    if await _fuente_ya_existe(source_name):
         print(f"  [omitido] '{source_name}' ya está en la base de conocimiento.")
         return
 
@@ -146,14 +144,14 @@ def ingestar_pdf(ruta: str) -> None:
     chunks = chunk_text(texto_completo)
 
     for i, chunk in enumerate(chunks):
-        embedding = get_embedding(chunk)
-        store_document_chunk(content=chunk, embedding=embedding, source=source_name, chunk_index=i)
+        embedding = await get_embedding(chunk)
+        await store_document_chunk(content=chunk, embedding=embedding, source=source_name, chunk_index=i)
         print(f"    [{i + 1}/{len(chunks)}] fragmento vectorizado", end="\r")
 
     print(f"  [ok] '{source_name}' -> {len(paginas)} paginas, {len(chunks)} fragmentos almacenados.")
 
 
-def ingestar_todos_los_pdfs() -> None:
+async def ingestar_todos_los_pdfs() -> None:
     """Busca todos los PDFs en docs/knowledge/ y los ingesta."""
     if not os.path.isdir(CARPETA_KNOWLEDGE):
         print(f"  [aviso] Carpeta '{CARPETA_KNOWLEDGE}' no encontrada. Créala y coloca los PDFs ahí.")
@@ -170,22 +168,22 @@ def ingestar_todos_los_pdfs() -> None:
         return
 
     for pdf in pdfs:
-        ingestar_pdf(pdf)
+        await ingestar_pdf(pdf)
 
 
 # ─── Ingesta de incidentes históricos ─────────────────────────────────────────
 
-def ingestar_incidentes_historicos() -> None:
+async def ingestar_incidentes_historicos() -> None:
     """Carga los incidentes históricos en incident_embeddings."""
-    if _incidentes_ya_cargados():
+    if await _incidentes_ya_cargados():
         print("  [omitido] Los incidentes históricos ya están cargados.")
         return
 
     print(f"  Cargando {len(INCIDENTES_HISTORICOS)} incidentes históricos...")
 
     for i, inc in enumerate(INCIDENTES_HISTORICOS):
-        embedding = get_embedding(inc["description"])
-        store_incident_embedding(
+        embedding = await get_embedding(inc["description"])
+        await store_incident_embedding(
             description=inc["description"],
             category=inc["category"],
             priority=inc["priority"],
@@ -199,9 +197,9 @@ def ingestar_incidentes_historicos() -> None:
 
 # ─── Ingesta de FAQs ──────────────────────────────────────────────────────────
 
-def ingestar_faqs() -> None:
+async def ingestar_faqs() -> None:
     """Parsea docs/knowledge/faqs.md y carga cada pregunta vectorizada en la tabla faqs."""
-    if _faqs_ya_cargadas():
+    if await _faqs_ya_cargadas():
         print("  [omitido] Las FAQs ya están cargadas.")
         return
 
@@ -213,8 +211,8 @@ def ingestar_faqs() -> None:
     print(f"  Cargando {len(faqs)} FAQs...")
 
     for i, faq in enumerate(faqs):
-        embedding = get_embedding(faq["question"])
-        store_faq(
+        embedding = await get_embedding(faq["question"])
+        await store_faq(
             question=faq["question"],
             answer=faq["answer"],
             category=faq["category"],
@@ -228,25 +226,25 @@ def ingestar_faqs() -> None:
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-def main():
+async def main():
     print("\n========================================")
     print("   Seed — Sistema de Respuesta a Incidentes")
     print("========================================\n")
 
     print("[1/4] Inicializando tablas vectoriales...")
-    initialize_vector_tables()
+    await initialize_vector_tables()
     print("  [ok] Tablas listas.\n")
 
     print("[2/4] Ingestando PDFs de knowledge base...")
-    ingestar_todos_los_pdfs()
+    await ingestar_todos_los_pdfs()
     print()
 
     print("[3/4] Cargando incidentes históricos...")
-    ingestar_incidentes_historicos()
+    await ingestar_incidentes_historicos()
     print()
 
     print("[4/4] Cargando FAQs...")
-    ingestar_faqs()
+    await ingestar_faqs()
 
     print("\n========================================")
     print("   Seed completado correctamente.")
@@ -254,4 +252,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

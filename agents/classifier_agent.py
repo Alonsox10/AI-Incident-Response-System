@@ -14,7 +14,7 @@ PEDIR_DETALLE = (
 )
 
 
-def classifier_agent(state: IncidentState):
+async def classifier_agent(state: IncidentState):
     try:
         with open("prompt/classify_agent.md", "r", encoding="utf-8") as f:
             prompt = f.read()
@@ -28,7 +28,7 @@ def classifier_agent(state: IncidentState):
         ]
 
         inicio = time.perf_counter()
-        response = llm_structured.invoke(message_state)
+        response = await llm_structured.ainvoke(message_state)
         duracion = time.perf_counter() - inicio
 
         if not response.informacion_suficiente:

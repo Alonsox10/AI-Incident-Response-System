@@ -15,6 +15,7 @@ Uso:
     python evaluation/run_flow_eval.py --limit 3
 """
 import argparse
+import asyncio
 import hashlib
 import json
 import os
@@ -72,31 +73,31 @@ def instrumentar():
     _orig_kb = rag.search_knowledge_base
     _orig_hist = rag.search_similar_incidents
 
-    def prechequeo(user_input):
-        r = _orig_prechequeo(user_input)
+    async def prechequeo(user_input):
+        r = await _orig_prechequeo(user_input)
         TRAZA.prechequeo_similitud = r
         return r
 
-    def faq_search(embedding, top_k=3, **kw):
-        r = _orig_faq_search(embedding, top_k=top_k, **kw)
+    async def faq_search(embedding, top_k=3, **kw):
+        r = await _orig_faq_search(embedding, top_k=top_k, **kw)
         TRAZA.faq_resultados = len(r)
         TRAZA.faq_top_similitud = r[0]["similarity"] if r else None
         return r
 
-    def kb(embedding, top_k=4, **kw):
-        r = _orig_kb(embedding, top_k=top_k, **kw)
+    async def kb(embedding, top_k=4, **kw):
+        r = await _orig_kb(embedding, top_k=top_k, **kw)
         TRAZA.rag_kb_resultados = len(r)
         # Huella del contenido, no del id: los duplicados que tuvo esta base eran filas
         # distintas con texto idéntico, así que comparar ids no los habría detectado.
         TRAZA.rag_kb_hashes = [hashlib.sha1(x["content"].encode("utf-8")).hexdigest()[:12] for x in r]
         # Diagnóstico: el mismo embedding sin umbral, para ver la distribución real.
         # No cuesta una llamada de embeddings extra, solo una query vectorial.
-        crudo = _orig_kb(embedding, top_k=6, similarity_threshold=0.0)
+        crudo = await _orig_kb(embedding, top_k=6, similarity_threshold=0.0)
         TRAZA.rag_kb_sims = [round(x["similarity"], 3) for x in crudo]
         return r
 
-    def hist(embedding, top_k=3, **kw):
-        r = _orig_hist(embedding, top_k=top_k, **kw)
+    async def hist(embedding, top_k=3, **kw):
+        r = await _orig_hist(embedding, top_k=top_k, **kw)
         TRAZA.rag_hist_resultados = len(r)
         return r
 
@@ -108,7 +109,7 @@ def instrumentar():
 
 # ─── Ejecución de un caso ─────────────────────────────────────────────────────
 
-def ejecutar_caso(app, case: dict) -> dict:
+async def ejecutar_caso(app, case: dict) -> dict:
     """Corre un caso por el grafo completo y devuelve lo observado."""
     from agents.faq_agent import FAQ_HIGH_CONFIDENCE_THRESHOLD
 
@@ -127,7 +128,7 @@ def ejecutar_caso(app, case: dict) -> dict:
     estado_final = {}
     error = None
     try:
-        for update in app.stream(input_state, config=config, stream_mode="updates"):
+        async for update in app.astream(input_state, config=config, stream_mode="updates"):
             for nodo, delta in update.items():
                 TRAZA.nodos.append(nodo)
                 if isinstance(delta, dict):
@@ -151,7 +152,7 @@ def ejecutar_caso(app, case: dict) -> dict:
 
     # Tools solicitadas por el agente de recomendación
     tools_llamadas = []
-    mensajes = app.get_state(config).values.get("messages", [])
+    mensajes = (await app.aget_state(config)).values.get("messages", [])
     for m in mensajes:
         if isinstance(m, AIMessage) and m.tool_calls:
             tools_llamadas.extend(tc["name"] for tc in m.tool_calls)
@@ -223,7 +224,7 @@ def porcentaje(aciertos: int, total: int) -> float:
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(description="Evalúa el flujo del grafo multiagente.")
     parser.add_argument("--dataset", default=str(DEFAULT_DATASET))
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
@@ -234,13 +235,14 @@ def main():
     casos = dataset["cases"][: args.limit] if args.limit else dataset["cases"]
 
     instrumentar()
-    from graphs.incidente_graph import app
+    from graphs.incidente_graph import iniciar_grafo
+    app = await iniciar_grafo()
 
     print(f"\nEvaluando el flujo con {len(casos)} casos...\n")
 
     resultados = []
     for i, case in enumerate(casos, 1):
-        obs = ejecutar_caso(app, case)
+        obs = await ejecutar_caso(app, case)
         checks = evaluar(case, obs)
         ok = all(checks.values())
         resultados.append({"case": case, "obs": obs, "checks": checks, "ok": ok})
@@ -287,4 +289,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))

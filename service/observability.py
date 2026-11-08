@@ -12,6 +12,7 @@ tocar la lógica de los agentes:
 3. `medir_nodo`, que envuelve un nodo del grafo para cronometrarlo sin que el nodo
    se entere. Se aplica en `graphs/incidente_graph.py` al registrar cada uno.
 """
+import asyncio
 import json
 import os
 import sys
@@ -138,12 +139,24 @@ def medir_nodo(nombre: str, fn):
 
     Delega siempre en la función original y no altera su valor de retorno: si esto
     cambiara el comportamiento del grafo, dejaría de medir el sistema real.
+
+    El envoltorio es `async def` porque desde la fase 1 todos los nodos lo son.
+    Devolver una función síncrona aquí sería un error silencioso grave: LangGraph la
+    delegaría al threadpool y reintroduciría exactamente el techo de concurrencia que
+    la fase elimina, sin que ninguna prueba lo delatara.
     """
+    if not asyncio.iscoroutinefunction(fn):
+        raise TypeError(
+            f"El nodo '{nombre}' no es asíncrono. Todos los nodos del grafo deben ser "
+            f"`async def`: uno síncrono se ejecuta en el threadpool y limita la concurrencia "
+            f"de todo el servicio."
+        )
+
     @wraps(fn)
-    def envuelto(state):
+    async def envuelto(state):
         inicio = time.perf_counter()
         try:
-            resultado = fn(state)
+            resultado = await fn(state)
         except Exception:
             ERRORES_TOTAL.labels(componente=nombre).inc()
             NODO_DURACION.labels(nodo=nombre).observe(time.perf_counter() - inicio)

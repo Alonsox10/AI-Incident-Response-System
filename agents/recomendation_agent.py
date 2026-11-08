@@ -5,7 +5,7 @@ from models.llm import llm_bind_tools
 from state.state import IncidentState
 
 
-def recomendation_agent(state: IncidentState):
+async def recomendation_agent(state: IncidentState):
     try:
         with open("prompt/recomendation_agent.md", "r", encoding="utf-8") as f:
             prompt = f.read()
@@ -44,7 +44,7 @@ Puedes hacer las tres llamadas en paralelo.
             ]
 
         inicio = time.perf_counter()
-        response = llm_bind_tools.invoke(message_state)
+        response = await llm_bind_tools.ainvoke(message_state)
         duracion = time.perf_counter() - inicio
 
         if has_tool_results:

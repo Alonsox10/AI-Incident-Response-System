@@ -20,7 +20,7 @@ SIN_RESULTADOS = (
 )
 
 
-def faq_agent(state: IncidentState):
+async def faq_agent(state: IncidentState):
     try:
         messages = state["messages"]
         user_input = messages[-1].content
@@ -28,8 +28,8 @@ def faq_agent(state: IncidentState):
         logger.info(f"[FAQ] Buscando en la base de FAQs | pregunta='{user_input[:80]}'")
         inicio = time.perf_counter()
 
-        embedding = get_embedding(user_input)
-        results = search_faqs(embedding, top_k=3)
+        embedding = await get_embedding(user_input)
+        results = await search_faqs(embedding, top_k=3)
 
         duracion = time.perf_counter() - inicio
 
@@ -82,7 +82,7 @@ FAQs recuperadas:
         ]
 
         inicio_llm = time.perf_counter()
-        response = llm.invoke(message_state)
+        response = await llm.ainvoke(message_state)
         duracion_llm = time.perf_counter() - inicio_llm
 
         logger.info(

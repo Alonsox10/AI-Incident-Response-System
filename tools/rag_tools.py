@@ -7,7 +7,7 @@ from database.vector_db import search_knowledge_base, search_similar_incidents
 
 
 @tool
-def search_knowledge_base_rag(query: str) -> str:
+async def search_knowledge_base_rag(query: str) -> str:
     """
     Busca en la base de conocimiento usando similitud vectorial semántica para encontrar
     documentación técnica, runbooks o guías de procedimientos relevantes al incidente.
@@ -17,8 +17,8 @@ def search_knowledge_base_rag(query: str) -> str:
         logger.info(f"[RAG-KB] Buscando en base de conocimiento | query='{query[:80]}'")
         inicio = time.perf_counter()
 
-        embedding = get_embedding(query)
-        results = search_knowledge_base(embedding, top_k=4)
+        embedding = await get_embedding(query)
+        results = await search_knowledge_base(embedding, top_k=4)
 
         duracion = time.perf_counter() - inicio
 
@@ -48,7 +48,7 @@ def search_knowledge_base_rag(query: str) -> str:
 
 
 @tool
-def search_similar_incidents_rag(incident_description: str) -> str:
+async def search_similar_incidents_rag(incident_description: str) -> str:
     """
     Busca en la base de datos histórica de incidentes resueltos aquellos similares al actual
     usando similitud vectorial semántica. Úsala para descubrir cómo se diagnosticaron
@@ -58,8 +58,8 @@ def search_similar_incidents_rag(incident_description: str) -> str:
         logger.info(f"[RAG-HIST] Buscando incidentes similares | query='{incident_description[:80]}'")
         inicio = time.perf_counter()
 
-        embedding = get_embedding(incident_description)
-        results = search_similar_incidents(embedding, top_k=3)
+        embedding = await get_embedding(incident_description)
+        results = await search_similar_incidents(embedding, top_k=3)
 
         duracion = time.perf_counter() - inicio
 

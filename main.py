@@ -1,11 +1,13 @@
-from fastapi import FastAPI, HTTPException, Response, Request, UploadFile, File, Form
-from fastapi.responses import PlainTextResponse
-from graphs.incidente_graph import app as incident_app
+from contextlib import asynccontextmanager
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Response, Request, UploadFile, File, Form
+from fastapi.responses import JSONResponse, PlainTextResponse
+from graphs.incidente_graph import get_app, grafo_listo, iniciar_grafo
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, AIMessage
 from loguru import logger
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from service.embedding_service import get_embedding, chunk_text
+from service.embedding_service import get_embedding, get_embeddings_lote, chunk_text
 from service.observability import (
     INCIDENTES_TOTAL,
     INCIDENTE_DURACION,
@@ -13,16 +15,46 @@ from service.observability import (
     get_request_id,
     set_request_context,
 )
-from database.db import get_connection
+from database.db import cerrar_pool, get_pool
 from database.vector_db import store_document_chunk, store_incident_embedding
 from pypdf import PdfReader
 import io
+import os
 import uuid
 import time
 
 configurar_logging()
 
-app = FastAPI()
+# Tope de subida para la ingesta de PDF. Antes no había ninguno: un archivo enorme
+# se leía entero en memoria y disparaba una llamada de embeddings por fragmento.
+MAX_PDF_BYTES = int(os.getenv("MAX_PDF_MB", "20")) * 1024 * 1024
+
+# Estado de los trabajos de ingesta en memoria. Alcanza mientras haya un worker;
+# con varias réplicas hay que moverlo a Postgres o Redis para que el cliente pueda
+# consultar un job desde cualquiera de ellas.
+TRABAJOS_INGESTA: dict[str, dict] = {}
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """
+    Abre el pool y compila el grafo al arrancar, y los cierra al apagar.
+
+    Esto es lo que permite que el proceso arranque aunque Postgres todavía no esté:
+    si falla, se registra y el servicio queda vivo respondiendo 503 en `/ready` hasta
+    que la base vuelva, en vez de morir al importar el módulo.
+    """
+    try:
+        await get_pool()
+        await iniciar_grafo()
+        logger.info("[ARRANQUE] Pool y grafo listos")
+    except Exception as e:
+        logger.error(f"[ARRANQUE] No se pudo inicializar: {e}. El servicio arranca degradado.")
+    yield
+    await cerrar_pool()
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 # ─── Correlación de logs ──────────────────────────────────────────────────────
@@ -54,20 +86,24 @@ def health():
 
 
 @app.get("/ready")
-def ready(response: Response):
+async def ready(response: Response):
     """
     Readiness: ¿puede atender tráfico? Verifica lo que un request necesita de verdad,
     que es Postgres (checkpointer + RAG) y el grafo compilado. Devuelve 503 si no,
     para que el balanceador deje de enrutar en vez de acumular errores.
+
+    Si el arranque falló porque la base no estaba, reintenta inicializar: así el
+    servicio se recupera solo cuando Postgres vuelve, sin reiniciar el contenedor.
     """
-    checks = {"grafo": incident_app is not None, "postgres": False}
+    checks = {"grafo": grafo_listo(), "postgres": False}
     try:
-        conexion = get_connection()
-        try:
-            conexion.execute("SELECT 1").fetchone()
-            checks["postgres"] = True
-        finally:
-            conexion.close()
+        pool = await get_pool()
+        async with pool.connection() as conexion:
+            await conexion.execute("SELECT 1")
+        checks["postgres"] = True
+        if not checks["grafo"]:
+            await iniciar_grafo()
+            checks["grafo"] = grafo_listo()
     except Exception as e:
         logger.warning(f"[READY] Postgres no disponible: {e}")
 
@@ -120,7 +156,7 @@ def _ensure_session(requests: Request, response: Response) -> str:
 # ─── Endpoint de incidentes ───────────────────────────────────────────────────
 
 @app.post("/incident")
-def handle_incident(request: IncidentRequest, requests: Request, response: Response):
+async def handle_incident(request: IncidentRequest, requests: Request, response: Response):
     try:
         session_id = _ensure_session(requests, response)
         # El session_id puede haberse creado recién acá, así que se refresca el
@@ -129,7 +165,8 @@ def handle_incident(request: IncidentRequest, requests: Request, response: Respo
         config = _get_config(session_id)
 
         # Detectar si ya existe conversación previa para esta sesión
-        estado_actual = incident_app.get_state(config)
+        incident_app = get_app()
+        estado_actual = await incident_app.aget_state(config)
         es_nueva_conversacion = not estado_actual.values
 
         if es_nueva_conversacion:
@@ -156,7 +193,7 @@ def handle_incident(request: IncidentRequest, requests: Request, response: Respo
         logger.info(f"[REQUEST] Incidente recibido | sesion={session_id[:8]}... | tipo={tipo} | input='{request.user_input[:60]}'")
 
         inicio = time.perf_counter()
-        result = incident_app.invoke(input_state, config=config)
+        result = await incident_app.ainvoke(input_state, config=config)
         duracion = time.perf_counter() - inicio
         INCIDENTE_DURACION.observe(duracion)
         INCIDENTES_TOTAL.labels(resultado="ok" if result else "error").inc()
@@ -188,7 +225,7 @@ def handle_incident(request: IncidentRequest, requests: Request, response: Respo
 # ─── Endpoint de historial de conversación ────────────────────────────────────
 
 @app.get("/conversation")
-def get_conversation(requests: Request):
+async def get_conversation(requests: Request):
     """
     Retorna el historial de mensajes de la sesión actual.
     Solo muestra mensajes del usuario y respuestas finales del agente (con contenido).
@@ -198,7 +235,7 @@ def get_conversation(requests: Request):
         return {"session_id": None, "messages": []}
 
     config = _get_config(session_id)
-    state = incident_app.get_state(config)
+    state = await get_app().aget_state(config)
 
     if not state.values:
         return {"session_id": session_id, "messages": []}
@@ -234,6 +271,7 @@ def reset_conversation(response: Response):
 
 @app.post("/documents/ingest/pdf")
 async def ingest_pdf(
+    background: BackgroundTasks,
     file: UploadFile = File(..., description="Archivo PDF a ingestar"),
     source: str = Form(None, description="Nombre o identificador del documento (opcional)"),
 ):
@@ -249,58 +287,92 @@ async def ingest_pdf(
         file   – archivo PDF
         source – identificador opcional (por defecto usa el nombre del archivo)
 
-    Retorna las páginas procesadas y los fragmentos almacenados.
+    Devuelve `202 Accepted` con un `job_id`; el progreso se consulta en
+    `GET /documents/ingest/{job_id}`.
     """
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Solo se aceptan archivos PDF.")
 
+    contenido_bytes = await file.read()
+    if len(contenido_bytes) > MAX_PDF_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"El archivo supera el límite de {MAX_PDF_BYTES // (1024 * 1024)} MB.",
+        )
+
     source_name = source or file.filename
 
+    # El texto se extrae acá (es rápido y permite rechazar un PDF inválido con un
+    # error inmediato); lo que se manda al background es la parte lenta, que son
+    # los embeddings y las escrituras.
     try:
-        contenido_bytes = await file.read()
         reader = PdfReader(io.BytesIO(contenido_bytes))
+        paginas = [p.extract_text().strip() for p in reader.pages if p.extract_text() and p.extract_text().strip()]
+    except Exception as e:
+        logger.error(f"No se pudo leer el PDF '{source_name}': {e}")
+        raise HTTPException(status_code=400, detail="El archivo no es un PDF legible.")
 
-        texto_completo = []
-        for pagina in reader.pages:
-            texto = pagina.extract_text()
-            if texto and texto.strip():
-                texto_completo.append(texto.strip())
+    if not paginas:
+        raise HTTPException(status_code=422, detail="No se pudo extraer texto del PDF.")
 
-        if not texto_completo:
-            raise HTTPException(status_code=422, detail="No se pudo extraer texto del PDF.")
+    chunks = chunk_text("\n\n".join(paginas))
+    job_id = str(uuid.uuid4())
+    TRABAJOS_INGESTA[job_id] = {
+        "status": "en_proceso",
+        "source": source_name,
+        "pages_processed": len(reader.pages),
+        "chunks_total": len(chunks),
+        "chunks_stored": 0,
+    }
+    background.add_task(_procesar_ingesta, job_id, chunks, source_name)
 
-        texto_unido = "\n\n".join(texto_completo)
-        chunks = chunk_text(texto_unido)
+    logger.info(f"[INGESTA] Aceptado '{source_name}' | job={job_id} | {len(chunks)} fragmentos")
+    return JSONResponse(
+        status_code=202,
+        content={"status": "accepted", "job_id": job_id, "chunks_total": len(chunks)},
+    )
 
-        stored = 0
-        for i, chunk in enumerate(chunks):
-            embedding = get_embedding(chunk)
-            store_document_chunk(
+
+async def _procesar_ingesta(job_id: str, chunks: list[str], source_name: str) -> None:
+    """
+    Vectoriza y almacena los fragmentos fuera del ciclo del request.
+
+    Los embeddings van en lote: antes era una llamada por fragmento, en serie, que
+    para un manual de 100 páginas son cientos de viajes de ida y vuelta con el
+    proceso entero bloqueado.
+    """
+    trabajo = TRABAJOS_INGESTA[job_id]
+    try:
+        embeddings = await get_embeddings_lote(chunks)
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            await store_document_chunk(
                 content=chunk,
                 embedding=embedding,
                 source=source_name,
                 chunk_index=i,
             )
-            stored += 1
-
-        logger.info(f"PDF '{source_name}' ingestado → {len(reader.pages)} páginas, {stored} fragmentos almacenados.")
-        return {
-            "status": "success",
-            "source": source_name,
-            "pages_processed": len(reader.pages),
-            "chunks_stored": stored,
-        }
-    except HTTPException:
-        raise
+            trabajo["chunks_stored"] = i + 1
+        trabajo["status"] = "completado"
+        logger.info(f"[INGESTA] '{source_name}' completado | job={job_id} | {len(chunks)} fragmentos")
     except Exception as e:
-        logger.error(f"Error al ingestar el PDF '{source_name}': {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        trabajo["status"] = "error"
+        trabajo["error"] = str(e)
+        logger.error(f"[INGESTA] '{source_name}' fallo | job={job_id} | {e}")
+
+
+@app.get("/documents/ingest/{job_id}")
+def estado_ingesta(job_id: str):
+    """Progreso de un trabajo de ingesta."""
+    trabajo = TRABAJOS_INGESTA.get(job_id)
+    if trabajo is None:
+        raise HTTPException(status_code=404, detail="No existe ese trabajo de ingesta.")
+    return {"job_id": job_id, **trabajo}
 
 
 # ─── Endpoint de incidentes históricos ───────────────────────────────────────
 
 @app.post("/incidents/historical")
-def add_historical_incident(request: HistoricalIncidentRequest):
+async def add_historical_incident(request: HistoricalIncidentRequest):
     """
     Agrega un incidente previamente resuelto a la base de conocimiento vectorial.
 
@@ -314,8 +386,8 @@ def add_historical_incident(request: HistoricalIncidentRequest):
         resolution  – cómo se resolvió
     """
     try:
-        embedding = get_embedding(request.description)
-        incident_id = store_incident_embedding(
+        embedding = await get_embedding(request.description)
+        incident_id = await store_incident_embedding(
             description=request.description,
             category=request.category,
             priority=request.priority,

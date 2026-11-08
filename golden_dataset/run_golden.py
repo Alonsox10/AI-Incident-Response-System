@@ -14,6 +14,7 @@ Uso:
     python golden_dataset/run_golden.py --solo-categoria Seguridad
 """
 import argparse
+import asyncio
 import json
 import sys
 import time
@@ -32,13 +33,13 @@ DATASET = BASE_DIR / "incidents.json"
 RESULTS = BASE_DIR / "results"
 
 
-def ejecutar(case: dict) -> dict:
+async def ejecutar(case: dict) -> dict:
     from agents.classifier_agent import classifier_agent
 
     state = {"messages": [HumanMessage(content=case["user_input"])]}
     inicio = time.perf_counter()
     try:
-        salida = classifier_agent(state)
+        salida = await classifier_agent(state)
         error = None
     except Exception as e:
         salida, error = {}, str(e)
@@ -54,7 +55,7 @@ def ejecutar(case: dict) -> dict:
     }
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(description="Golden dataset del clasificador de incidentes.")
     parser.add_argument("--dataset", default=str(DATASET))
     parser.add_argument("--out-dir", default=str(RESULTS))
@@ -73,7 +74,7 @@ def main():
 
     resultados = []
     for i, case in enumerate(casos, 1):
-        obs = ejecutar(case)
+        obs = await ejecutar(case)
         cat_ok = obs["category"] == case["expected_category"]
         pri_ok = obs["priority"] == case["expected_priority"]
         resultados.append({"case": case, "obs": obs, "cat_ok": cat_ok, "pri_ok": pri_ok})
@@ -138,4 +139,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))

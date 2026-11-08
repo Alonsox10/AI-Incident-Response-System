@@ -110,6 +110,80 @@ inalcanzable en producción — el servicio no puede estar "vivo pero no listo" 
 Postgres, porque directamente no llega a vivir. Lo arregla la Fase 1 al mover la
 inicialización al `lifespan`.
 
+---
+
+# Resultados DESPUÉS de la Fase 1 — 2026-11-07
+
+Mismo comando, misma máquina, mismo modelo. Camino de request íntegramente asíncrono,
+pool de conexiones y checkpointer `AsyncPostgresSaver`.
+
+| Usuarios | Throughput | p50 | p95 | Fallos |
+|---:|---:|---:|---:|---:|
+| 10 | 0,67 req/s | 14,0 s | 18,0 s | **0%** |
+| 50 | 2,99 req/s | 14,0 s | 21,0 s | **1,5%** (4 de 269) |
+
+Comparado con la línea base:
+
+| Métrica (50 usuarios) | Antes | Después | |
+|---|---:|---:|---|
+| Tasa de fallos | 29,4% | **1,5%** | **20× mejor** |
+| Throughput bruto | 3,94 req/s | 2,99 req/s | peor en apariencia |
+| Throughput **útil** (sin fallos) | 2,78 req/s | **2,95 req/s** | mejor |
+| p95 | 17 s | 21 s | peor |
+
+## Por qué el throughput bruto bajó y aun así esto es una mejora
+
+**El 3,94 req/s de la línea base estaba inflado por los fallos.** Un request que recibe
+429 termina en ~3 s en vez de los ~12 s de uno completo, así que el 29% de peticiones
+fallidas subía artificialmente el promedio. Contando solo las que devolvieron una
+respuesta útil, el throughput pasó de 2,78 a 2,95 req/s.
+
+El p95 sube por el mismo motivo: antes casi un tercio de los requests "terminaba" rápido
+porque fracasaba. Ahora se completan todos, y completarse cuesta ~15 s.
+
+**La métrica honesta aquí es la tasa de error**, y cayó de 29,4% a 1,5%.
+
+## Lo que esta prueba NO demuestra
+
+No demuestra que el techo de concurrencia haya subido, y conviene decirlo claro:
+
+- Con 50 usuarios apenas se supera el límite de 40 hilos de AnyIO que tenía la versión
+  síncrona. Para ver la diferencia haría falta probar con 200-500 usuarios.
+- Pero a 50 usuarios ya se roza la cuota TPM. Subir a 200 solo produciría más 429, que
+  es un límite del proveedor y no del proceso.
+
+Dicho de otro modo: **el techo dejó de estar en la aplicación y pasó a estar en la cuota
+de OpenAI**, que era el objetivo de la fase, pero esta prueba no puede cuantificar cuánto
+subió porque no hay margen de cuota para medirlo. Para hacerlo habría que usar un doble
+del LLM (Pista A), que se descartó por decisión del dueño del plan el 2026-10-17.
+
+## Verificaciones binarias de la Fase 1
+
+| Criterio | Resultado |
+|---|---|
+| Ninguna llamada bloqueante en el camino de un request | ✅ auditado programáticamente: los 4 agentes, las 4 tools, embeddings y las 7 funciones de `vector_db` son `async` |
+| La app arranca con Postgres caído | ✅ arranca y responde `/health` 200, `/ready` 503. Antes crasheaba al importar con `ConnectionTimeout` |
+| Se recupera sola cuando la base vuelve | ✅ cubierto por `tests/unit/test_db_pool.py`; ⚠️ no verificado contra una base real (ver abajo) |
+| `pytest` sin regresiones | ✅ 56/56 (eran 50; +6 del pool) |
+| Golden dataset sin cambios | ✅ categoría 30/30, prioridad 25/30 — igual que al cerrar la Fase 0 |
+
+### Sobre la recuperación automática
+
+Durante la fase se encontró y corrigió un bug real: cuando `open()` del pool agotaba el
+timeout, **psycopg cerraba el pool pero el módulo seguía guardando la referencia**, así
+que todas las llamadas posteriores fallaban con "the pool is already closed" y el proceso
+quedaba muerto hasta reiniciarlo — justo lo contrario de lo que la fase busca. Ahora un
+pool fallido o cerrado se descarta y el siguiente intento crea uno nuevo.
+
+La lógica está cubierta por tests deterministas. **No se validó contra una base real**: el
+intento de simularlo con un proxy TCP falló porque el proxy no soportaba las conexiones
+concurrentes del pool, y tirar el PostgreSQL nativo de la máquina quedó descartado por
+afectar al entorno del usuario. Queda pendiente para la Fase 4, donde el plan ya contempla
+una prueba de fallo controlado — y donde primero hay que resolver la ambigüedad de los dos
+PostgreSQL descrita arriba.
+
+---
+
 ## Qué comparar después de la Fase 1
 
 Repetir las dos etapas con el mismo comando y anotar los resultados debajo:

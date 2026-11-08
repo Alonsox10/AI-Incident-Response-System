@@ -4,14 +4,13 @@ from langgraph.prebuilt import ToolNode
 from agents.recomendation_agent import recomendation_agent
 from tools.incidente_tools import search_incident_by_category, insert_incident
 from tools.rag_tools import search_knowledge_base_rag, search_similar_incidents_rag
-from langgraph.checkpoint.postgres import PostgresSaver
-from psycopg import Connection
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from dotenv import load_dotenv
 from agents.orchestrator_agent import orchestrator_agent
 from graphs.router import router
 from agents.classifier_agent import classifier_agent
 from agents.faq_agent import faq_agent
-from database.vector_db import initialize_vector_tables
+from database.db import get_pool
 from service.observability import medir_nodo
 from langchain_core.messages import AIMessage
 import os
@@ -70,11 +69,47 @@ graph.add_conditional_edges("recommendation", recommendation_router, {"tools": "
 graph.add_conditional_edges(source_node, routing_function, routes)
 
 
-# Inicializar el checkpointer y las tablas vectoriales al arrancar
-connection = Connection.connect(URI, autocommit=True)
-checkpointer = PostgresSaver(connection)
-checkpointer.setup()
+# ─── Compilación ──────────────────────────────────────────────────────────────
+#
+# Importar este módulo ya no conecta a Postgres ni ejecuta DDL. Antes sí lo hacía, y
+# eso significaba que el proceso crasheaba al arrancar si la base no estaba lista
+# (CrashLoopBackOff en un orquestador real), que cada réplica lanzaba DDL concurrente
+# en cada despliegue, y que el grafo no se podía importar ni testear sin infraestructura.
+#
+# Ahora el grafo se define al importar —que es puro— y se compila en el `lifespan`.
 
-initialize_vector_tables()
+_app = None
 
-app = graph.compile(checkpointer=checkpointer)
+
+async def iniciar_grafo():
+    """
+    Compila el grafo con el checkpointer asíncrono. La llama el lifespan de FastAPI.
+
+    El checkpointer comparte el pool del resto de la aplicación en vez de abrir su
+    propia conexión: así los checkpoints dejan de serializarse detrás de un único
+    socket y se recuperan solos si Postgres se reinicia.
+    """
+    global _app
+    if _app is not None:
+        return _app
+
+    pool = await get_pool()
+    checkpointer = AsyncPostgresSaver(pool)
+    await checkpointer.setup()
+    _app = graph.compile(checkpointer=checkpointer)
+    return _app
+
+
+def get_app():
+    """El grafo compilado. Falla con un mensaje claro si nadie llamó a `iniciar_grafo`."""
+    if _app is None:
+        raise RuntimeError(
+            "El grafo no está compilado. Llama a `await iniciar_grafo()` primero "
+            "(el lifespan de FastAPI lo hace al arrancar)."
+        )
+    return _app
+
+
+def grafo_listo() -> bool:
+    """Para el chequeo de readiness, sin provocar la compilación."""
+    return _app is not None

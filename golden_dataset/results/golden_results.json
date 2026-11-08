@@ -12,11 +12,11 @@
       "priority": "Alta",
       "possible_causes": [
         "Excepción no controlada en el endpoint /api/v1/pagos",
-        "Despliegue reciente con un bug en el código",
-        "Problema de configuración en el entorno de producción"
+        "Despliegue reciente con variable de entorno incorrecta",
+        "Problema en la conexión a la base de datos tras el deploy"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.78,
+      "duracion_s": 1.51,
       "error": null
     },
     "cat_ok": true,
@@ -34,12 +34,12 @@
       "category": "Error backend",
       "priority": "Alta",
       "possible_causes": [
-        "Error en la lógica de consulta de la API que mezcla los datos de los usuarios",
-        "Problema de caché que devuelve datos incorrectos",
-        "Fallo en la validación de permisos para acceder a los datos del usuario"
+        "Error en la lógica de consulta de la API que mezcla los datos de usuarios",
+        "Problema en la gestión de sesiones que permite acceder a datos de otros usuarios",
+        "Fallo en la base de datos que devuelve registros incorrectos"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.31,
+      "duracion_s": 1.3,
       "error": null
     },
     "cat_ok": true,
@@ -59,10 +59,10 @@
       "possible_causes": [
         "Error en la lógica de generación del reporte",
         "Problema en la consulta a la base de datos que causa duplicados",
-        "Falta de un mecanismo de deduplicación en el proceso de facturación"
+        "Falta de un mecanismo de deduplicación en el código del servicio"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.32,
+      "duracion_s": 1.14,
       "error": null
     },
     "cat_ok": true,
@@ -85,7 +85,7 @@
         "Timeout en la conexión con el servicio de autenticación"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.15,
+      "duracion_s": 1.13,
       "error": null
     },
     "cat_ok": true,
@@ -108,7 +108,7 @@
         "Fallo en la integración con el proveedor de servicios de correo"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.22,
+      "duracion_s": 1.33,
       "error": null
     },
     "cat_ok": true,
@@ -126,12 +126,12 @@
       "category": "Error backend",
       "priority": "Media",
       "possible_causes": [
-        "Configuración incorrecta del formato de fecha en el endpoint",
-        "Falta de conversión de UTC a la hora local en el código",
-        "Error en la lógica que determina el huso horario del usuario"
+        "Error en la conversión de zona horaria en el endpoint",
+        "Configuración incorrecta del huso horario en el servidor",
+        "Falta de parámetros para especificar la zona horaria del usuario"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.51,
+      "duracion_s": 1.56,
       "error": null
     },
     "cat_ok": true,
@@ -151,10 +151,10 @@
       "possible_causes": [
         "Error en el código JavaScript que impide la carga del contenido",
         "Problemas de compatibilidad con la versión de Chrome",
-        "Falta de recursos estáticos necesarios para renderizar la página"
+        "Recursos estáticos no cargados correctamente tras el despliegue"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.07,
+      "duracion_s": 1.62,
       "error": null
     },
     "cat_ok": true,
@@ -173,11 +173,11 @@
       "priority": "Media",
       "possible_causes": [
         "Incompatibilidad del botón de exportar con Safari",
-        "Error de JavaScript específico en Safari",
-        "Problema de configuración del navegador Safari"
+        "Error de JavaScript que se activa solo en Safari",
+        "Problema de estilos CSS que afecta la funcionalidad en Safari"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.04,
+      "duracion_s": 1.24,
       "error": null
     },
     "cat_ok": true,
@@ -195,12 +195,12 @@
       "category": "Error frontend",
       "priority": "Media",
       "possible_causes": [
-        "El estado del formulario no se guarda en el almacenamiento local del navegador",
-        "No se implementa un mecanismo de recuperación de datos al volver a la pestaña",
-        "El formulario no tiene un evento de guardado automático al cambiar de pestaña"
+        "El formulario no guarda el estado al cambiar de pestaña",
+        "Falta de manejo de eventos de pérdida de foco en el formulario",
+        "Problemas con la gestión de sesión del usuario"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.16,
+      "duracion_s": 1.17,
       "error": null
     },
     "cat_ok": true,
@@ -218,12 +218,12 @@
       "category": "Error frontend",
       "priority": "Media",
       "possible_causes": [
-        "Problema con la conexión WebSocket que actualiza los datos en tiempo real",
-        "Error en la lógica de actualización automática del dashboard",
-        "Configuración incorrecta del intervalo de actualización en el frontend"
+        "Problema con la lógica de actualización automática del dashboard",
+        "Error en la configuración del polling para la actualización de datos",
+        "Fallo en la conexión con la API que proporciona los datos del dashboard"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.04,
+      "duracion_s": 1.31,
       "error": null
     },
     "cat_ok": true,
@@ -246,7 +246,7 @@
         "Errores en el CSS que afectan la visualización del pie de página"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.31,
+      "duracion_s": 1.5,
       "error": null
     },
     "cat_ok": true,
@@ -269,7 +269,7 @@
         "Tamaño de fuente demasiado grande para el contenedor"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 0.9,
+      "duracion_s": 1.05,
       "error": null
     },
     "cat_ok": true,
@@ -287,12 +287,12 @@
       "category": "Infraestructura",
       "priority": "Alta",
       "possible_causes": [
-        "Espacio en disco insuficiente para el crecimiento de datos",
+        "Espacio en disco insuficiente para el crecimiento de la base de datos",
         "Archivos de logs acumulándose sin rotación",
-        "Falta de limpieza de datos antiguos en la base de datos"
+        "Datos temporales no eliminados que ocupan espacio"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.07,
+      "duracion_s": 1.31,
       "error": null
     },
     "cat_ok": true,
@@ -315,7 +315,7 @@
         "Problema en la imagen del contenedor que causa fallos en el inicio"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.12,
+      "duracion_s": 1.13,
       "error": null
     },
     "cat_ok": true,
@@ -334,11 +334,11 @@
       "priority": "Alta",
       "possible_causes": [
         "El servidor está apagado o ha fallado físicamente",
-        "Problemas de red específicos para el servidor",
+        "Problemas de red específicos en el servidor",
         "Recursos del servidor (CPU, memoria) saturados impidiendo la respuesta"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.12,
+      "duracion_s": 1.04,
       "error": null
     },
     "cat_ok": true,
@@ -361,7 +361,7 @@
         "Configuración del servidor no optimizada para picos de carga"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.05,
+      "duracion_s": 1.21,
       "error": null
     },
     "cat_ok": true,
@@ -380,11 +380,11 @@
       "priority": "Media",
       "possible_causes": [
         "Fugas de memoria en el servicio de catálogo",
-        "Carga creciente de datos en el catálogo sin optimización",
-        "Configuración inadecuada de límites de memoria en el servicio"
+        "Carga de trabajo creciente que agota los recursos",
+        "Configuración inadecuada de límites de memoria en el contenedor"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.1,
+      "duracion_s": 1.07,
       "error": null
     },
     "cat_ok": true,
@@ -403,11 +403,11 @@
       "priority": "Media",
       "possible_causes": [
         "Recursos del servidor (CPU, memoria, disco) saturados durante el proceso de backup",
-        "Incremento en el volumen de datos a respaldar",
-        "Cambios en la configuración del job de backup que afectan su rendimiento"
+        "Incremento en la cantidad de datos a respaldar",
+        "Cambios en la configuración del job de backup que afectan el rendimiento"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.45,
+      "duracion_s": 1.07,
       "error": null
     },
     "cat_ok": true,
@@ -430,7 +430,7 @@
         "Configuración incorrecta en la red local de la sucursal norte"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.13,
+      "duracion_s": 0.97,
       "error": null
     },
     "cat_ok": true,
@@ -450,10 +450,10 @@
       "possible_causes": [
         "Fallo en el router principal de la oficina",
         "Problemas con el proveedor de servicios de Internet (ISP)",
-        "Configuración incorrecta en el firewall que bloquea el tráfico saliente"
+        "Configuración incorrecta en el firewall que bloquea el acceso externo"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.2,
+      "duracion_s": 1.06,
       "error": null
     },
     "cat_ok": true,
@@ -473,10 +473,10 @@
       "possible_causes": [
         "Problemas con el servidor de autenticación de la VPN",
         "Configuración incorrecta en el cliente VPN de los usuarios remotos",
-        "Problemas de conectividad entre los usuarios remotos y el servidor VPN"
+        "Interrupciones en la conectividad de red para los usuarios remotos"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.22,
+      "duracion_s": 1.16,
       "error": null
     },
     "cat_ok": true,
@@ -499,7 +499,7 @@
         "Configuración incorrecta de la red interna"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.04,
+      "duracion_s": 1.23,
       "error": null
     },
     "cat_ok": true,
@@ -522,7 +522,7 @@
         "Problemas de conectividad entre el cliente y el servidor DNS"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 0.98,
+      "duracion_s": 1.13,
       "error": null
     },
     "cat_ok": true,
@@ -545,7 +545,7 @@
         "Fallo en la configuración de la red local"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.05,
+      "duracion_s": 1.02,
       "error": null
     },
     "cat_ok": true,
@@ -568,7 +568,7 @@
         "Falta de actualizaciones de seguridad en el software del sistema operativo"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.06,
+      "duracion_s": 1.54,
       "error": null
     },
     "cat_ok": true,
@@ -591,7 +591,7 @@
         "Malware en el dispositivo del empleado"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.14,
+      "duracion_s": 0.98,
       "error": null
     },
     "cat_ok": true,
@@ -614,7 +614,7 @@
         "Configuración incorrecta de permisos en la cuenta de Drive"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.0,
+      "duracion_s": 1.06,
       "error": null
     },
     "cat_ok": true,
@@ -633,11 +633,11 @@
       "priority": "Media",
       "possible_causes": [
         "Versión de OpenSSL desactualizada en los servidores",
-        "Configuración de seguridad inadecuada",
-        "Falta de monitoreo de actualizaciones de seguridad"
+        "Configuración de seguridad inadecuada en los servidores",
+        "Falta de un proceso de actualización regular de software"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 1.02,
+      "duracion_s": 1.33,
       "error": null
     },
     "cat_ok": true,
@@ -660,7 +660,7 @@
         "Configuración de seguridad inadecuada"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 0.92,
+      "duracion_s": 1.13,
       "error": null
     },
     "cat_ok": true,
@@ -683,7 +683,7 @@
         "Posible escaneo automatizado de vulnerabilidades"
       ],
       "current_step": "classifier_done",
-      "duracion_s": 0.92,
+      "duracion_s": 1.33,
       "error": null
     },
     "cat_ok": true,

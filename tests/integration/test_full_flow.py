@@ -1,15 +1,17 @@
 """
 Test de integración del flujo completo del sistema de respuesta a incidentes.
 
-En lugar de importar `graphs/incidente_graph.py` (que conecta a PostgreSQL en
-el momento del import), reconstruimos el mismo grafo aquí usando MemorySaver
-en memoria.  Todos los LLMs y la conexión a base de datos se mockean.
+Reconstruimos el grafo aquí con MemorySaver para no depender del checkpointer de
+PostgreSQL. Todos los LLMs y el pool de base de datos se mockean.
+
+Desde la fase 1 los nodos son `async def`, así que los tests también lo son y el
+grafo se recorre con `ainvoke`.
 
 Flujo completo que se valida:
   orchestrator → classifier → orchestrator → recommendation → tools → END
 """
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 from langchain_core.messages import HumanMessage, AIMessage
 
 from schemas.models import OrquestatorOutput, IncidentClassificationOutput
@@ -23,6 +25,33 @@ from agents.recomendation_agent import recomendation_agent
 from agents.faq_agent import faq_agent
 from tools.incidente_tools import search_incident_by_category, insert_incident
 from graphs.router import router
+
+
+class PoolFalso:
+    """
+    Doble del pool asíncrono. `pool.connection()` es un context manager async,
+    así que no sirve un MagicMock: hay que implementar __aenter__/__aexit__.
+    """
+
+    def __init__(self, filas=None):
+        self.filas = filas or []
+        self.ejecutadas = []
+
+    def connection(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+    async def execute(self, query, params=None):
+        self.ejecutadas.append((query, params))
+        cur = AsyncMock()
+        cur.fetchall.return_value = self.filas
+        cur.fetchone.return_value = self.filas[0] if self.filas else None
+        return cur
 
 
 def build_test_graph():
@@ -57,7 +86,7 @@ def build_test_graph():
 
 class TestFullIncidentFlow:
 
-    def test_complete_workflow_state_after_execution(self):
+    async def test_complete_workflow_state_after_execution(self):
         """
         El estado final debe tener categoría, prioridad, causas y current_step
         correctamente poblados después de correr el flujo completo.
@@ -82,30 +111,32 @@ class TestFullIncidentFlow:
         )
 
         # Mock de la conexión a PostgreSQL usada por las tools
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchall.return_value = [
+        pool_falso = PoolFalso(filas=[
             ("Backend server down", "Alta"),
             ("API response timeout", "Media"),
-        ]
+        ])
 
-        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", return_value=None), \
+        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", new_callable=AsyncMock, return_value=None), \
              patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
              patch("agents.classifier_agent.llm_structured") as mock_cls, \
              patch("agents.recomendation_agent.llm_bind_tools") as mock_rec, \
-             patch("tools.incidente_tools.get_connection", return_value=mock_conn):
+             patch("tools.incidente_tools.get_pool", new_callable=AsyncMock, return_value=pool_falso):
 
-            mock_orch.invoke.side_effect = orchestrator_responses
-            mock_cls.invoke.return_value = IncidentClassificationOutput(
+            mock_orch.ainvoke = AsyncMock()
+            mock_orch.ainvoke.side_effect = orchestrator_responses
+            mock_cls.ainvoke = AsyncMock()
+            mock_cls.ainvoke.return_value = IncidentClassificationOutput(
                 category="Error backend",
                 priority="Alta",
                 possible_causes=["Timeout de conexión", "Memoria agotada"],
                 informacion_suficiente=True,
             )
-            mock_rec.invoke.return_value = llm_recommendation_response
+            mock_rec.ainvoke = AsyncMock()
+            mock_rec.ainvoke.return_value = llm_recommendation_response
 
             app = build_test_graph()
             config = {"configurable": {"thread_id": "integration-test-001"}}
-            final_state = app.invoke(
+            final_state = await app.ainvoke(
                 {"messages": [HumanMessage(content="El servidor de backend no responde")]},
                 config=config,
             )
@@ -115,7 +146,7 @@ class TestFullIncidentFlow:
         assert "Timeout de conexión" in final_state["possible_causes"]
         assert final_state["current_step"] == "recommendation_done"
 
-    def test_each_agent_is_called_correct_number_of_times(self):
+    async def test_each_agent_is_called_correct_number_of_times(self):
         """
         Verifica que el grafo ejecuta exactamente:
         - orchestrator x2  (routing inicial + routing tras classifier)
@@ -135,50 +166,53 @@ class TestFullIncidentFlow:
                 "type": "tool_call",
             }],
         )
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchall.return_value = []
+        pool_falso = PoolFalso()
 
-        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", return_value=None), \
+        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", new_callable=AsyncMock, return_value=None), \
              patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
              patch("agents.classifier_agent.llm_structured") as mock_cls, \
              patch("agents.recomendation_agent.llm_bind_tools") as mock_rec, \
-             patch("tools.incidente_tools.get_connection", return_value=mock_conn):
+             patch("tools.incidente_tools.get_pool", new_callable=AsyncMock, return_value=pool_falso):
 
-            mock_orch.invoke.side_effect = orchestrator_responses
-            mock_cls.invoke.return_value = IncidentClassificationOutput(
+            mock_orch.ainvoke = AsyncMock()
+            mock_orch.ainvoke.side_effect = orchestrator_responses
+            mock_cls.ainvoke = AsyncMock()
+            mock_cls.ainvoke.return_value = IncidentClassificationOutput(
                 category="Seguridad",
                 priority="Alta",
                 possible_causes=["Acceso no autorizado"],
                 informacion_suficiente=True,
             )
-            mock_rec.invoke.return_value = llm_recommendation_response
+            mock_rec.ainvoke = AsyncMock()
+            mock_rec.ainvoke.return_value = llm_recommendation_response
 
             app = build_test_graph()
             config = {"configurable": {"thread_id": "integration-test-002"}}
-            app.invoke(
+            await app.ainvoke(
                 {"messages": [HumanMessage(content="Detectamos una brecha de seguridad")]},
                 config=config,
             )
 
-        assert mock_orch.invoke.call_count == 2
-        assert mock_cls.invoke.call_count == 1
-        assert mock_rec.invoke.call_count == 1
+        assert mock_orch.ainvoke.call_count == 2
+        assert mock_cls.ainvoke.call_count == 1
+        assert mock_rec.ainvoke.call_count == 1
 
-    def test_orchestrator_shortcuts_to_end(self):
+    async def test_orchestrator_shortcuts_to_end(self):
         """
         Si el orchestrator decide 'end' en la primera llamada, el workflow
         termina sin llamar al classifier ni al recommendation agent.
         """
-        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", return_value=None), \
+        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", new_callable=AsyncMock, return_value=None), \
              patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
              patch("agents.classifier_agent.llm_structured") as mock_cls, \
              patch("agents.recomendation_agent.llm_bind_tools") as mock_rec:
 
-            mock_orch.invoke.return_value = OrquestatorOutput(next_agent="end")
+            mock_orch.ainvoke = AsyncMock()
+            mock_orch.ainvoke.return_value = OrquestatorOutput(next_agent="end")
 
             app = build_test_graph()
             config = {"configurable": {"thread_id": "integration-test-003"}}
-            app.invoke(
+            await app.ainvoke(
                 {"messages": [HumanMessage(content="Todo está bien")]},
                 config=config,
             )
@@ -186,7 +220,7 @@ class TestFullIncidentFlow:
         mock_cls.invoke.assert_not_called()
         mock_rec.invoke.assert_not_called()
 
-    def test_database_tool_is_called_with_correct_category(self):
+    async def test_database_tool_is_called_with_correct_category(self):
         """
         La tool search_incident_by_category debe recibir la categoría
         exacta que el recommendation agent especificó en el tool_call.
@@ -204,34 +238,36 @@ class TestFullIncidentFlow:
                 "type": "tool_call",
             }],
         )
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchall.return_value = []
+        pool_falso = PoolFalso()
 
-        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", return_value=None), \
+        with patch("agents.orchestrator_agent._coincide_con_faq_documentada", new_callable=AsyncMock, return_value=None), \
              patch("agents.orchestrator_agent.llm_structured") as mock_orch, \
              patch("agents.classifier_agent.llm_structured") as mock_cls, \
              patch("agents.recomendation_agent.llm_bind_tools") as mock_rec, \
-             patch("tools.incidente_tools.get_connection", return_value=mock_conn):
+             patch("tools.incidente_tools.get_pool", new_callable=AsyncMock, return_value=pool_falso):
 
-            mock_orch.invoke.side_effect = orchestrator_responses
-            mock_cls.invoke.return_value = IncidentClassificationOutput(
+            mock_orch.ainvoke = AsyncMock()
+            mock_orch.ainvoke.side_effect = orchestrator_responses
+            mock_cls.ainvoke = AsyncMock()
+            mock_cls.ainvoke.return_value = IncidentClassificationOutput(
                 category="Redes",
                 priority="Media",
                 possible_causes=["Latencia alta"],
                 informacion_suficiente=True,
             )
-            mock_rec.invoke.return_value = llm_recommendation_response
+            mock_rec.ainvoke = AsyncMock()
+            mock_rec.ainvoke.return_value = llm_recommendation_response
 
             app = build_test_graph()
             config = {"configurable": {"thread_id": "integration-test-004"}}
-            app.invoke(
+            await app.ainvoke(
                 {"messages": [HumanMessage(content="La red está muy lenta")]},
                 config=config,
             )
 
-        # Verifica que el execute de la DB fue llamado con "Redes"
-        # call_args[0] = (query_sql, params_tuple) → params_tuple es call_args[0][1]
-        sql_params = mock_conn.execute.call_args[0][1]
+        # Verifica que la consulta a la DB llevó la categoría que decidió el clasificador.
+        # PoolFalso registra cada execute como (query, params).
+        _, sql_params = pool_falso.ejecutadas[-1]
         assert "Redes" in sql_params
 
 
@@ -241,7 +277,7 @@ class TestFullFaqFlow:
     pasada (orchestrator → faq → END) sin pasar por classifier/recommendation/tools.
     """
 
-    def test_pregunta_documentada_resuelve_por_el_prechequeo_sin_llamar_al_llm_del_orquestador(self):
+    async def test_pregunta_documentada_resuelve_por_el_prechequeo_sin_llamar_al_llm_del_orquestador(self):
         """
         Si la pregunta coincide con una FAQ documentada, el pre-chequeo determinístico
         enruta directo a faq sin gastar una llamada al LLM del orquestador; el faq_agent
@@ -267,7 +303,7 @@ class TestFullFaqFlow:
 
             app = build_test_graph()
             config = {"configurable": {"thread_id": "integration-test-faq-001"}}
-            final_state = app.invoke(
+            final_state = await app.ainvoke(
                 {"messages": [HumanMessage(content="¿Cómo desbloqueo una cuenta de usuario en Active Directory?")]},
                 config=config,
             )
@@ -280,7 +316,7 @@ class TestFullFaqFlow:
         mock_cls.invoke.assert_not_called()
         mock_rec.invoke.assert_not_called()
 
-    def test_pregunta_de_procedimiento_sin_match_documentado_la_enruta_el_llm_del_orquestador(self):
+    async def test_pregunta_de_procedimiento_sin_match_documentado_la_enruta_el_llm_del_orquestador(self):
         """
         Sin match determinístico, decide el LLM del orquestador; con baja similitud en
         el faq_agent, se sintetiza la respuesta con una única llamada a su LLM.
@@ -304,19 +340,21 @@ class TestFullFaqFlow:
              patch("agents.classifier_agent.llm_structured") as mock_cls, \
              patch("agents.recomendation_agent.llm_bind_tools") as mock_rec:
 
-            mock_orch.invoke.return_value = OrquestatorOutput(next_agent="faq")
-            mock_faq_llm.invoke.return_value = respuesta_sintetizada
+            mock_orch.ainvoke = AsyncMock()
+            mock_orch.ainvoke.return_value = OrquestatorOutput(next_agent="faq")
+            mock_faq_llm.ainvoke = AsyncMock()
+            mock_faq_llm.ainvoke.return_value = respuesta_sintetizada
 
             app = build_test_graph()
             config = {"configurable": {"thread_id": "integration-test-faq-002"}}
-            final_state = app.invoke(
+            final_state = await app.ainvoke(
                 {"messages": [HumanMessage(content="¿Qué debo hacer ante un ataque de ransomware?")]},
                 config=config,
             )
 
         assert final_state["current_step"] == "faq_done"
         assert final_state["recommendations"] == respuesta_sintetizada.content
-        mock_orch.invoke.assert_called_once()
-        mock_faq_llm.invoke.assert_called_once()
+        mock_orch.ainvoke.assert_called_once()
+        mock_faq_llm.ainvoke.assert_called_once()
         mock_cls.invoke.assert_not_called()
         mock_rec.invoke.assert_not_called()
