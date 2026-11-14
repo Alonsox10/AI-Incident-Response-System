@@ -29,7 +29,17 @@ Su regla de operación es estricta y manda sobre cualquier iniciativa propia:
 - Un commit por fase como mínimo. Si algo obliga a salirse del alcance descrito, parar y consultar.
 - El documento tiene una sección **"Lo que NO se toca"**: estructura del grafo, taxonomía `Literal`, pre-chequeo de FAQ con sus dos umbrales, hermeticidad de los tests y el ground truth del golden dataset.
 
-Estado: la **Fase 0 está implementada** (observabilidad, `/health`, `/ready`, `/metrics`, línea base de carga) pero **el checklist del plan sigue marcándola pendiente** — le falta el OK de cierre del usuario. Las fases 1 a 4 no se han empezado.
+**Estado (2026-11-14):**
+
+| Fase | Alcance | Estado |
+|---|---|---|
+| 0 | Instrumentar y medir | ✅ cerrada |
+| 1 | Concurrencia y conexiones | ✅ cerrada |
+| 2 | Resiliencia y seguridad | ⬜ pendiente |
+| 3 | Costo y calidad | ⬜ pendiente |
+| 4 | Pre-producción | ⬜ pendiente |
+
+Las notas de cierre de cada fase viven en el propio plan: qué criterios quedaron parciales y por qué, las decisiones tomadas y los hallazgos. **Leerlas antes de empezar la Fase 2** — hay dos que la condicionan: que el techo de carga es la cuota del proveedor y no el código, y que la recuperación automática ante caída de Postgres quedó verificada solo con tests, no contra una base real.
 
 ## Comandos
 
@@ -50,7 +60,8 @@ Estado: la **Fase 0 está implementada** (observabilidad, `/health`, `/ready`, `
 docker compose up -d          # levanta Postgres con pgvector (ejecuta init.sql al crear el volumen)
 python -m venv venv && venv\Scripts\activate   # Windows; source venv/bin/activate en Mac/Linux
 pip install -r requirements.txt
-python seed.py                 # idempotente: crea las tablas vectoriales, ingesta PDFs de docs/knowledge/, carga incidentes históricos y parsea faqs.md
+python scripts/migrate.py      # aplica el esquema (idempotente, registra lo aplicado)
+python seed.py                 # carga datos: PDFs de docs/knowledge/, incidentes históricos y faqs.md
 ```
 
 > **Hay dos PostgreSQL en esta máquina y el `docker compose` es una pista falsa.** El puerto 5432 lo sirve un **PostgreSQL 17 nativo de Windows** (servicio `postgresql-x64-17`), no el contenedor `pgvector/pgvector:pg16` del compose — y es el nativo el que tiene todos los datos. El contenedor puede estar `Up (healthy)` sin que nadie le hable: comprobado el 2026-11-07, con el contenedor arriba y `SHOW server_version` devolviendo `17.10`.
@@ -103,12 +114,29 @@ python scripts/migrate.py                 # aplica el esquema; paso previo, no c
 
 **Gasta API real**: cada request dispara ~5-6 llamadas al LLM. Empezar corto. La línea base medida y el punto de saturación están en `docs/baseline-carga.md`; es la cifra contra la que se compara la Fase 1.
 
-**El techo actual no es del código, es la cuota del proveedor.** Medido: saturación entre 10 y 50 usuarios, 3,94 req/s y 29% de errores a 50 — y esos errores son **429 de OpenAI por tokens por minuto**, no agotamiento de hilos ni de conexiones. La cuenta sale exacta: 2.000.000 TPM ÷ ~8.900 tokens por incidente ≈ 3,7 req/s.
+**El techo no es del código, es la cuota del proveedor.** Con ~8.900 tokens por incidente
+y un límite de 2.000.000 TPM, el máximo matemático son ~3,7 req/s — medido, coincide. Bajo
+estrés (100 usuarios) el 52% de peticiones falla, y **todos los errores son 429 de OpenAI:
+cero de base de datos, cero de agotamiento del pool**.
 
-Dos cosas se siguen de ahí, y conviene tenerlas presentes antes de medir cualquier fase:
+| | Antes de Fase 1 | Después | Estrés (100 us.) |
+|---|---:|---:|---:|
+| Fallos a 50 usuarios | 29,4% | **1,5%** | 52,5% |
+| Throughput útil | 2,78 req/s | 2,95 req/s | 4,09 req/s |
 
-- **Hacer el código async no sube ese techo.** Para pasarlo hay que bajar tokens por incidente (el 92% son de entrada: historial + contexto RAG en cada llamada) o pedir más cuota. Eso convierte la Fase 3 en una mejora de *capacidad*, no solo de costo.
-- El criterio de aceptación de la Fase 1 dice que si el throughput no mejora "algo quedó síncrono". Con esta evidencia esa inferencia ya no es válida: podría no mejorar por la cuota. Medir concurrencia en vuelo y p95 en vez de throughput bruto, o resolver A1 (reintentos ante 429) antes.
+Dos trampas al interpretar estos números:
+
+- **El throughput bruto engaña.** Un 429 termina en ~3 s y un request completo en ~12 s, así
+  que una corrida con muchos fallos exhibe *más* req/s. Comparar siempre throughput útil.
+- **Hacer código async no sube el techo.** Para pasarlo hay que bajar tokens por incidente
+  (el 92% son de entrada: historial + contexto RAG en cada llamada) o pedir más cuota. Eso
+  convierte la Fase 3 en una mejora de *capacidad*, no solo de costo.
+
+La métrica que **sí** mide la aplicación y no la cuota es la latencia de `/health` bajo carga:
+con 100 workflows de ~15 s en vuelo se mantuvo en **18 ms de mediana y 139 ms el peor caso**,
+sin un solo fallo. Eso prueba que el event loop no está bloqueado — en la versión síncrona
+`/health` haría cola detrás de los 40 hilos ocupados, y en Kubernetes eso reinicia un pod
+sano. Si vuelves a medir una fase, mide esto.
 
 ### Tests
 
@@ -160,7 +188,7 @@ Correr ambas antes/después de cambiar un prompt, un umbral o el modelo. Al agre
 
 ### Flujo de un incidente
 
-`POST /incident` (`main.py`) resuelve/crea un `session_id` por cookie, arma el `IncidentState` (nuevo o incremental) y llama a `incident_app.invoke(...)`, el grafo de LangGraph compilado en `graphs/incidente_graph.py` con checkpointer Postgres (persiste el estado de la conversación por `thread_id=session_id`).
+`POST /incident` (`main.py`) resuelve/crea un `session_id` por cookie, arma el `IncidentState` (nuevo o incremental) y hace `await get_app().ainvoke(...)` sobre el grafo de LangGraph, que se compila en el `lifespan` con `AsyncPostgresSaver` y persiste la conversación por `thread_id=session_id`.
 
 El grafo **no tiene un flujo lineal fijo**: el nodo `orchestrator` es el entry point y se re-visita después de cada agente para decidir el siguiente paso:
 
@@ -204,7 +232,7 @@ Si ves 26/30 o 25/30 con esos casos, es esto y **no** una regresión nueva.
 
 ### Persistencia de conversación
 
-El estado (`state/state.py::IncidentState`, extiende `MessagesState` de LangGraph) se persiste completo por sesión vía `PostgresSaver`. En una conversación nueva se manda el estado completo; en una continuación solo se manda el nuevo `HumanMessage` (el reducer `add_messages` lo concatena) y se resetea `current_step=None` para forzar una nueva pasada de clasificación.
+El estado (`state/state.py::IncidentState`, extiende `MessagesState` de LangGraph) se persiste completo por sesión vía `AsyncPostgresSaver`, sobre el mismo pool que usa el resto de la aplicación. En una conversación nueva se manda el estado completo; en una continuación solo se manda el nuevo `HumanMessage` (el reducer `add_messages` lo concatena) y se resetea `current_step=None` para forzar una nueva pasada de clasificación.
 
 ### Concurrencia y conexiones
 
@@ -237,7 +265,7 @@ Tres tablas vectoriales en pgvector (`database/vector_db.py`; esquemas en `db/ve
 - `incident_embeddings` — incidentes históricos resueltos, agregables vía `/incidents/historical`. Una fila = un caso completo.
 - `faqs` — preguntas frecuentes. Una fila = un caso completo. Se pueblan parseando `docs/knowledge/faqs.md` con `service/faq_loader.py` (parseo estructural exacto sobre una convención Markdown documentada en el propio archivo — sin heurísticas ni LLM).
 
-Las tres usan similarity search por coseno con un umbral (`similarity_threshold=0.40` por defecto). `tools/rag_tools.py` expone las búsquedas sobre `knowledge_base` e `incident_embeddings` como `@tool` de LangChain para que el LLM las invoque; la de `faqs` **no** se expone como tool (la llama directo `faq_agent`, y también el pre-chequeo del orquestador). `tools/incidente_tools.py` expone operaciones SQL directas sobre la tabla relacional `incidents` (`database/db.py`, distinta conexión de la vectorial aunque sea el mismo Postgres).
+Las tres usan similarity search por coseno con un umbral (`similarity_threshold=0.40` por defecto). `tools/rag_tools.py` expone las búsquedas sobre `knowledge_base` e `incident_embeddings` como `@tool` de LangChain para que el LLM las invoque; la de `faqs` **no** se expone como tool (la llama directo `faq_agent`, y también el pre-chequeo del orquestador). `tools/incidente_tools.py` expone operaciones SQL directas sobre la tabla relacional `incidents`. Desde la Fase 1 **todo comparte el mismo pool** de `database/db.py` —las búsquedas vectoriales, la tabla relacional y el checkpointer—, así que el tope de conexiones por réplica es uno solo (`POSTGRES_POOL_MAX`, 20 por defecto).
 
 ### Prompts
 
