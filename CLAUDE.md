@@ -29,17 +29,17 @@ Su regla de operación es estricta y manda sobre cualquier iniciativa propia:
 - Un commit por fase como mínimo. Si algo obliga a salirse del alcance descrito, parar y consultar.
 - El documento tiene una sección **"Lo que NO se toca"**: estructura del grafo, taxonomía `Literal`, pre-chequeo de FAQ con sus dos umbrales, hermeticidad de los tests y el ground truth del golden dataset.
 
-**Estado (2026-11-14):**
+**Estado (2026-11-15):**
 
 | Fase | Alcance | Estado |
 |---|---|---|
 | 0 | Instrumentar y medir | ✅ cerrada |
 | 1 | Concurrencia y conexiones | ✅ cerrada |
-| 2 | Resiliencia y seguridad | ⬜ pendiente |
+| 2 | Resiliencia y seguridad | 🟡 implementada, pendiente del OK de cierre |
 | 3 | Costo y calidad | ⬜ pendiente |
 | 4 | Pre-producción | ⬜ pendiente |
 
-Las notas de cierre de cada fase viven en el propio plan: qué criterios quedaron parciales y por qué, las decisiones tomadas y los hallazgos. **Leerlas antes de empezar la Fase 2** — hay dos que la condicionan: que el techo de carga es la cuota del proveedor y no el código, y que la recuperación automática ante caída de Postgres quedó verificada solo con tests, no contra una base real.
+Las notas de cierre de cada fase viven en el propio plan: qué criterios quedaron parciales y por qué, las decisiones tomadas y los hallazgos. **Leerlas antes de empezar la Fase 3.** Dos de la Fase 1 siguen vigentes: que el techo de carga es la cuota del proveedor y no el código, y que la recuperación automática ante caída de Postgres quedó verificada solo con tests, no contra una base real. De la Fase 2, lo que queda abierto está en [`docs/seguridad-fase2.md`](docs/seguridad-fase2.md): el tope de gasto diario con alerta no se implementó, el 429 real del proveedor no se reprodujo end-to-end, y la imagen Docker no se construyó.
 
 ## Comandos
 
@@ -62,14 +62,26 @@ python -m venv venv && venv\Scripts\activate   # Windows; source venv/bin/activa
 pip install -r requirements.txt
 python scripts/migrate.py      # aplica el esquema (idempotente, registra lo aplicado)
 python seed.py                 # carga datos: PDFs de docs/knowledge/, incidentes históricos y faqs.md
+python scripts/gestionar_tenants.py crear demo   # emite una API key: sin ella la API da 401
 ```
+
+> **Desde la Fase 2 la API exige autenticación y no hay forma de saltársela.** Sin una
+> API key, `/incident` responde 401, y eso incluye al golpe de curl de prueba, a
+> `loadtest/locustfile.py` y a `evaluation/run_eval.py` —los dos últimos se niegan a
+> arrancar sin la variable `API_KEY`, porque una corrida sin credencial mediría cuántos
+> 401 por segundo aguanta el servicio—. La clave en claro se imprime **una sola vez**:
+> la base guarda solo su SHA-256, así que si se pierde se rota (`gestionar_tenants.py
+> rotar <nombre>`), no se recupera.
 
 > **Hay dos PostgreSQL en esta máquina y el `docker compose` es una pista falsa.** El puerto 5432 lo sirve un **PostgreSQL 17 nativo de Windows** (servicio `postgresql-x64-17`), no el contenedor `pgvector/pgvector:pg16` del compose — y es el nativo el que tiene todos los datos. El contenedor puede estar `Up (healthy)` sin que nadie le hable: comprobado el 2026-11-07, con el contenedor arriba y `SHOW server_version` devolviendo `17.10`.
 >
 > Consecuencias: detener el contenedor **no** deja al agente sin base (una prueba de fallo controlado contra él da un falso verde), y quien siga estas instrucciones desde cero levantaría una base vacía distinta de la que tiene los datos. Verificar siempre con `SHOW server_version` a quién se está hablando antes de concluir nada sobre la base.
 
-Variables de entorno en `.env`:
-- Requeridas: `OPENAI_API_KEY`, `POSTGRES_URL`.
+Variables de entorno en `.env` (plantilla completa y comentada en `.env.example`):
+- Requeridas: `OPENAI_API_KEY`, `POSTGRES_URL`, `SESSION_SECRET`.
+- `SESSION_SECRET` firma la cookie de conversación. Si falta, en desarrollo se genera uno efímero y el arranque avisa; con `APP_ENTORNO=produccion` el arranque **falla**, porque sin un valor fijo y compartido cada reinicio invalida las cookies y cada réplica firma distinto. `APP_ENTORNO=produccion` activa además el flag `Secure` de la cookie.
+- Resiliencia (opcionales): `LLM_TIMEOUT`/`LLM_MAX_RETRIES`, `EMBEDDINGS_TIMEOUT`/`EMBEDDINGS_MAX_RETRIES` (30 s y 3 por defecto) y `GRAFO_PRESUPUESTO_SEGUNDOS` (120), que es el tope del workflow completo.
+- Límites y CORS (opcionales): `RATE_LIMIT_INCIDENTES` (30/minute), `RATE_LIMIT_INGESTA` (5/minute), `RATE_LIMIT_GENERAL` (120/minute) y `CORS_ORIGENES` (vacío por defecto; nunca `*`, que con credenciales no es válido).
 - Observabilidad (opcionales): `LOG_JSON` (default `true`), `LOG_LEVEL`, `LLM_COSTO_ENTRADA_POR_1M` y `LLM_COSTO_SALIDA_POR_1M` (ambas 0 por defecto).
 - **LangSmith está desactivado** desde la Fase 0: las claves siguen en el `.env` comentadas. La trazabilidad la cubren ahora los logs JSON con `request_id` y las métricas de `/metrics`.
 - Umbrales del camino de FAQ (opcionales): `FAQ_HIGH_CONFIDENCE_THRESHOLD` (default 0.75) y `FAQ_ROUTING_THRESHOLD` (default 0.85). Ver la sección de arquitectura: están separados a propósito.
@@ -154,6 +166,12 @@ pytest tests/integration                  # solo integración
 
 El paso 1 no es opcional: `database/db.py`, `models/llm.py` y `service/embedding_service.py` llaman `load_dotenv(override=True)` a nivel de import, lo que **pisaba los dummies con las credenciales reales del `.env`** y hacía que la suite gastara API de OpenAI y consultara el Postgres real sin que se notara. Que los tests pasen con credenciales bogus es la prueba de que nadie sale a la red — si alguna vez la suite empieza a tardar varios segundos de más, sospecha de esto.
 
+Los tests de la API (`tests/integration/test_api_security.py`) construyen el `TestClient`
+**sin** `with`: el context manager dispararía el `lifespan`, que abre el pool y compila el
+grafo contra el Postgres real. Usan `raise_server_exceptions=False` porque Starlette
+reenvía la excepción después de que el handler de `Exception` ya respondió, y sin eso un
+500 legítimo haría fallar el test en vez de dejar inspeccionar la respuesta.
+
 Al escribir un test que toque `agents/`, `models/` o `graphs/`: colócalo dentro de `tests/` (para que aplique el conftest) y mockea toda llamada externa. Ojo con `agents.orchestrator_agent._coincide_con_faq_documentada`, que pega a embeddings + Postgres en cada invocación del orquestador con `current_step is None`; `tests/unit/test_orchestrator.py` lo neutraliza con un fixture `autouse`, y los tests de integración lo parchean caso por caso.
 
 ### Golden dataset — correr siempre junto con pytest
@@ -188,7 +206,7 @@ Correr ambas antes/después de cambiar un prompt, un umbral o el modelo. Al agre
 
 ### Flujo de un incidente
 
-`POST /incident` (`main.py`) resuelve/crea un `session_id` por cookie, arma el `IncidentState` (nuevo o incremental) y hace `await get_app().ainvoke(...)` sobre el grafo de LangGraph, que se compila en el `lifespan` con `AsyncPostgresSaver` y persiste la conversación por `thread_id=session_id`.
+`POST /incident` (`main.py`) autentica al tenant por `X-API-Key`, deriva el `thread_id` de la identidad más la cookie de conversación, arma el `IncidentState` (nuevo o incremental) y hace `await get_app().ainvoke(...)` —dentro de un `asyncio.wait_for` con el presupuesto total— sobre el grafo de LangGraph, que se compila en el `lifespan` con `AsyncPostgresSaver`.
 
 El grafo **no tiene un flujo lineal fijo**: el nodo `orchestrator` es el entry point y se re-visita después de cada agente para decidir el siguiente paso:
 
@@ -270,6 +288,35 @@ Las tres usan similarity search por coseno con un umbral (`similarity_threshold=
 ### Prompts
 
 Cada agente lee su system prompt desde un `.md` en `prompt/` en cada invocación (no se cachean en memoria) — para cambiar el comportamiento de un agente, edita el `.md` correspondiente, no hace falta tocar el código Python del agente.
+
+### Borde de seguridad
+
+Desde la Fase 2 la lógica de los agentes sigue sin saber nada de autenticación: todo
+está en el borde (`main.py` + `service/auth.py` + `service/errors.py`).
+
+- **`service/auth.py`** — API key por tenant contra la tabla `tenants` (solo el SHA-256
+  de la clave). Dos dependencias de FastAPI: `tenant_actual` y `tenant_admin`. `/health`,
+  `/ready` y `/metrics` quedan abiertos y **exentos del rate limiting**: los consulta el
+  orquestador, y un 429 ahí se leería como "el pod no responde" y reiniciaría instancias
+  sanas en el pico.
+- **El `thread_id` ya no es la cookie.** Se deriva con
+  `sha256(f"{tenant_id}:{conversacion_id}")`. Esto es lo que cierra el IDOR, y la
+  distinción importa al tocarlo: la firma HMAC de la cookie impide inventarse
+  conversaciones *dentro* del mismo tenant, pero el aislamiento **entre** tenants no
+  depende de ella — la misma cookie en otras manos resuelve a otro hilo. Si alguna vez
+  el `thread_id` vuelve a depender de un valor que manda el cliente, el agujero vuelve.
+- **`service/errors.py`** — jerarquía con `http_status`, `codigo` y `mensaje_publico`.
+  Los agentes levantan con `raise ... from e` y `clasificar()` recorre **toda la cadena
+  de causas**, porque lo que llega al handler es un envoltorio y el dato que decide el
+  status (un 429, un timeout, un pool agotado) está más abajo en `__cause__`. Los tipos
+  del proveedor se reconocen **por nombre de clase**, no importando el SDK de OpenAI.
+  Las excepciones de agente heredan de `ValueError` a propósito, para no romper los
+  tests que afirmaban ese tipo.
+- **Nunca `str(e)` al cliente.** La respuesta de error es siempre
+  `{"error": {"codigo", "mensaje", "error_id"}}`; el `error_id` es el puente con el log,
+  donde el sink JSON guarda `cadena` y `traceback` completos.
+
+Detalle de lo verificado y lo que quedó abierto: [`docs/seguridad-fase2.md`](docs/seguridad-fase2.md).
 
 ### Observabilidad
 

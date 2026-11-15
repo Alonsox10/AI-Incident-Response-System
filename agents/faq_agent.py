@@ -6,6 +6,7 @@ from models.llm import llm
 from state.state import IncidentState
 from service.embedding_service import get_embedding
 from database.vector_db import search_faqs
+from service.errors import ErrorDeFAQ
 
 
 # Por encima de este umbral la FAQ se devuelve tal cual, sin generar texto con el LLM.
@@ -97,4 +98,4 @@ FAQs recuperadas:
         }
     except Exception as e:
         logger.error(f"Error en el agente de FAQs: {e}")
-        raise ValueError("Ocurrió un error en el agente de FAQs.")
+        raise ErrorDeFAQ("Ocurrió un error en el agente de FAQs.") from e

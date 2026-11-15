@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import time
+import traceback
 from contextvars import ContextVar
 from functools import wraps
 
@@ -53,9 +54,29 @@ def _serializar(record) -> str:
         "session_id": _session_id.get(),
     }
     if record["exception"] is not None:
-        payload["excepcion"] = repr(record["exception"].value)
+        excepcion = record["exception"]
+        payload["excepcion"] = repr(excepcion.value)
+        # La cadena de causas completa, de la excepción visible hasta la original.
+        # Desde la Fase 2 los agentes levantan con `raise ... from e`, así que lo que
+        # llega acá es un envoltorio: sin esto el log diría "error en el agente
+        # clasificador" y se perdería el 429 o el timeout que lo provocó, que es el
+        # único dato que sirve para operar el sistema.
+        payload["cadena"] = _cadena_de_causas(excepcion.value)
+        payload["traceback"] = "".join(
+            traceback.format_exception(excepcion.type, excepcion.value, excepcion.traceback)
+        )
     payload.update(record["extra"])
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _cadena_de_causas(exc: BaseException, limite: int = 10) -> list[str]:
+    """`repr` de cada excepción de la cadena, de la más externa a la causa original."""
+    cadena: list[str] = []
+    actual: BaseException | None = exc
+    while actual is not None and len(cadena) < limite:
+        cadena.append(repr(actual))
+        actual = actual.__cause__ or actual.__context__
+    return cadena
 
 
 def _sink(message) -> None:

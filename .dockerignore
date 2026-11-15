@@ -1,10 +1,29 @@
+# El Dockerfile hace `COPY . .`, así que lo que esté acá es lo que NO entra a la imagen.
+#
+# `.env` es la línea más importante del archivo: sin ella el build hornea las
+# credenciales reales dentro de una capa de la imagen, donde quedan legibles para
+# cualquiera que pueda hacer `docker history` o descargarla del registro, incluso si
+# después se pasan por variables de entorno.
+.env
+.env.*
+!.env.example
+
 venv/
-.git/
 __pycache__/
 *.pyc
-*.pyo
-.env
+.git/
+.gitignore
+
+# Resultados de pruebas y evaluaciones: ocupan y no los usa el runtime.
+loadtest/resultados/
+evaluation/results/
 .pytest_cache/
+
+# El código de pruebas no corre en producción.
 tests/
-docs/
-*.md
+
+# NO se excluyen `*.md` ni `docs/`, aunque el .dockerignore anterior lo hacía: cada
+# agente lee su system prompt desde `prompt/*.md` **en cada invocación**, así que con
+# esas dos líneas la imagen se construía sin un solo prompt y el grafo fallaba al
+# primer request. Sí se excluye la documentación larga, que nadie lee en runtime.
+docs/*.md

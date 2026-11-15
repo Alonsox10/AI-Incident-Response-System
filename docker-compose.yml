@@ -1,19 +1,32 @@
+# Las credenciales ya no están escritas acá.
+#
+# Hasta la Fase 2 este archivo traía la contraseña de Postgres en claro, versionada
+# en git. Ahora se lee del entorno (o del `.env`, que no se versiona) y el `:?` las
+# hace obligatorias: si faltan, `docker compose up` falla con un mensaje claro en vez
+# de arrancar con un valor por defecto que después nadie recuerda que existe.
+#
+#   cp .env.example .env    # y completar los valores
+#   docker compose up -d
+#
+# En un despliegue real estas variables las inyecta el gestor de secretos del
+# orquestador (Secret Manager, Vault, Secrets de Kubernetes), no un archivo.
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: incident_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: alonso
-      POSTGRES_DB: incident_ai
+      POSTGRES_USER: ${POSTGRES_USER:?falta POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-incident_ai}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d incident_ai"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-incident_ai}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -28,7 +41,10 @@ services:
       - .env
     environment:
       # Sobreescribe la URL de .env para usar el hostname del servicio de Docker
-      POSTGRES_URL: postgresql://postgres:alonso@postgres:5432/incident_ai
+      POSTGRES_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-incident_ai}
+      APP_ENTORNO: ${APP_ENTORNO:-desarrollo}
+      SESSION_SECRET: ${SESSION_SECRET:?falta SESSION_SECRET}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
     depends_on:
       postgres:
         condition: service_healthy

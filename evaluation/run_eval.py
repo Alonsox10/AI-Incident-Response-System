@@ -84,10 +84,22 @@ def call_incident_api(base_url: str, user_input: str, timeout: int = 120) -> dic
     Llama a POST /incident. Deliberadamente NO reutiliza cookies entre llamadas
     (cada invocación usa una request nueva sin sesión previa), de modo que cada
     caso del dataset arranca una conversación nueva y aislada en el grafo.
+
+    Desde la Fase 2 el endpoint exige `X-API-Key`: la credencial sale de la variable
+    de entorno `API_KEY`, que se emite con `scripts/gestionar_tenants.py`.
     """
+    api_key = os.getenv("API_KEY")
+    if not api_key:
+        raise SystemExit(
+            "Falta API_KEY. /incident exige autenticación desde la Fase 2.
+"
+            "  python scripts/gestionar_tenants.py crear evaluacion"
+        )
+
     resp = requests.post(
         f"{base_url}/incident",
         json={"user_input": user_input},
+        headers={"X-API-Key": api_key},
         timeout=timeout,
     )
     resp.raise_for_status()

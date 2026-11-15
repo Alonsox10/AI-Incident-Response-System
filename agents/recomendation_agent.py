@@ -3,6 +3,7 @@ from loguru import logger
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from models.llm import llm_bind_tools
 from state.state import IncidentState
+from service.errors import ErrorDeRecomendacion
 
 
 async def recomendation_agent(state: IncidentState):
@@ -60,4 +61,4 @@ Puedes hacer las tres llamadas en paralelo.
         }
     except Exception as e:
         logger.error(f"Error en el agente de recomendación: {e}")
-        raise ValueError("Ocurrió un error en el agente de recomendación.")
+        raise ErrorDeRecomendacion("Ocurrió un error en el agente de recomendación.") from e

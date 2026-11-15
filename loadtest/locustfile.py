@@ -21,13 +21,28 @@ Una rampa larga con muchos usuarios se traduce en factura real. Empezar corto.
 Variables:
     LOADTEST_SOLO_SALUD=1   solo golpea /health, sin gastar tokens. Sirve para
                             separar el techo del framework del costo del LLM.
+    API_KEY=...             credencial del tenant. Obligatoria desde la Fase 2:
+                            sin ella /incident responde 401 y la prueba mide
+                            cuántos 401 por segundo aguanta el servicio, que no
+                            es lo que interesa. Se emite con
+                            `python scripts/gestionar_tenants.py crear carga`.
 """
 import os
 import random
+import sys
 
 from locust import HttpUser, between, task
 
 SOLO_SALUD = os.getenv("LOADTEST_SOLO_SALUD", "").lower() in ("1", "true", "yes")
+API_KEY = os.getenv("API_KEY", "")
+
+if not SOLO_SALUD and not API_KEY:
+    sys.exit(
+        "Falta API_KEY. /incident exige autenticación desde la Fase 2, y una corrida "
+        "sin credencial mediría 401 en vez del workflow.
+"
+        "  python scripts/gestionar_tenants.py crear carga"
+    )
 
 # Incidentes variados para que el clasificador no responda siempre lo mismo y para
 # que el RAG tenga que recuperar de distintas zonas de la base.
@@ -55,10 +70,14 @@ class UsuarioDeIncidentes(HttpUser):
             return
 
         # Cada usuario virtual arranca sin cookie, así que cada request abre su
-        # propia sesión en el checkpointer: no se contaminan entre sí.
+        # propia conversación en el checkpointer: no se contaminan entre sí.
+        # Todos comparten el mismo tenant, que es justo lo que conviene medir: así
+        # la prueba pega contra un único `thread_id` derivado por request y, de paso,
+        # ejercita el límite por tenant si se baja RATE_LIMIT_INCIDENTES.
         self.client.post(
             "/incident",
             json={"user_input": random.choice(INCIDENTES)},
+            headers={"X-API-Key": API_KEY},
             name="POST /incident",
             timeout=120,
         )

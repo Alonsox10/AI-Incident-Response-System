@@ -6,6 +6,7 @@ from state.state import IncidentState
 from schemas.models import OrquestatorOutput
 from service.embedding_service import get_embedding
 from database.vector_db import search_faqs
+from service.errors import ErrorDelOrquestador
 
 
 llm_structured = llm.with_structured_output(OrquestatorOutput)
@@ -78,4 +79,7 @@ async def orchestrator_agent(state: IncidentState):
         return {"next_agent": response.next_agent}
     except Exception as e:
         logger.error(f"Error en el agente orquestador: {e}")
-        raise ValueError("Ocurrió un error en el agente orquestador.")
+        # `from e` conserva la causa original en la cadena de excepciones: el handler
+        # de main.py la recorre para decidir si esto fue un 429 del proveedor, una
+        # caída de Postgres o un fallo nuestro, y el log la imprime completa.
+        raise ErrorDelOrquestador("Ocurrió un error en el agente orquestador.") from e

@@ -25,12 +25,23 @@ cd AI-Incident-Response-System
 
 Crea un archivo `.env` en la raiz del proyecto con las variables obligatorias:
 
-```env
-OPENAI_API_KEY=sk-...
-POSTGRES_URL=postgresql://postgres:alonso@localhost:5432/incident_ai
+La forma mas corta es copiar la plantilla y completarla:
+
+```bash
+cp .env.example .env
 ```
 
-> En Docker el servicio usa internamente `postgresql://postgres:alonso@postgres:5432/incident_ai` (definido en `docker-compose.yml`). El `.env` es para correr la app localmente fuera de Docker.
+Las tres obligatorias:
+
+```env
+OPENAI_API_KEY=sk-...
+POSTGRES_URL=postgresql://USUARIO:CONTRASENA@localhost:5432/incident_ai
+SESSION_SECRET=   # python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+`SESSION_SECRET` firma la cookie de conversacion. En desarrollo, si falta, se genera uno efimero y el arranque avisa; con `APP_ENTORNO=produccion` es obligatoria y el arranque falla, porque sin un valor fijo y compartido cada reinicio invalida las cookies y cada replica firma distinto.
+
+> **Las credenciales ya no estan escritas en el repositorio.** `docker-compose.yml` lee `POSTGRES_USER` y `POSTGRES_PASSWORD` del entorno y falla con un mensaje claro si faltan, en vez de arrancar con un valor por defecto que despues nadie recuerda que existe. `.env` esta en `.gitignore` y en `.dockerignore`: el segundo importa igual que el primero, porque sin el el build hornearia las credenciales dentro de una capa de la imagen, donde quedan legibles con `docker history`.
 
 Variables opcionales del camino de FAQs:
 
@@ -155,6 +166,40 @@ Salida esperada:
 
 ---
 
+## 5.1. Emitir una API key
+
+Desde la Fase 2 **la API exige autenticacion**: sin una clave, `/incident` responde `401`. Las claves se emiten con un script, porque la base guarda solo su SHA-256 y la clave en claro existe una unica vez, en la salida del comando.
+
+```bash
+python scripts/gestionar_tenants.py crear demo            # tenant normal
+python scripts/gestionar_tenants.py crear soporte --admin # puede ingestar documentos
+python scripts/gestionar_tenants.py listar
+python scripts/gestionar_tenants.py rotar demo            # invalida la anterior
+python scripts/gestionar_tenants.py desactivar demo
+```
+
+La clave se manda en la cabecera `X-API-Key`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/incident   -H "X-API-Key: iras_..."   -H "Content-Type: application/json"   -d '{"user_input":"La VPN de la sucursal norte dejo de conectar"}'
+```
+
+Los scripts de carga y de evaluacion la leen de la variable `API_KEY` y se niegan a correr sin ella: una corrida sin credencial mediria cuantos `401` por segundo aguanta el servicio, que no es lo que interesa.
+
+```bash
+export API_KEY=iras_...      # Windows: $env:API_KEY = "iras_..."
+```
+
+> **El rol no es burocracia.** `/documents/ingest/pdf` y `/incidents/historical` escriben en las tablas que alimentan el RAG del agente de recomendacion. Antes eran publicos, asi que cualquiera podia inyectar contenido arbitrario en la base que el agente usa para responderle a todos: en la practica, prompt injection persistente contra el sistema entero.
+
+### La conversacion ya no se identifica con la cookie
+
+La cookie `session_id` era el `thread_id` del checkpointer, sin firma y sin `HttpOnly`. Ponerla a mano con el UUID de otra persona devolvia su historial completo de incidentes.
+
+Ahora la cookie se llama `conversacion`, va firmada con HMAC y con `HttpOnly; SameSite=Lax` (mas `Secure` cuando `APP_ENTORNO=produccion`), y el `thread_id` **se deriva del tenant autenticado mas el identificador de conversacion**. Lo que cierra el agujero es la derivacion, no la firma: la misma cookie en manos de otro tenant resuelve a otro hilo, asi que la conversacion ajena no es inalcanzable por estar protegida, es inalcanzable porque no se puede nombrar.
+
+---
+
 ## 6. Iniciar la aplicacion
 
 El comando **no es el mismo en Linux que en Windows**. Se invoca el interprete del venv de forma explicita, que es la forma que no puede fallar:
@@ -228,17 +273,38 @@ curl http://127.0.0.1:8000/ready     # debe dar {"grafo":true,"postgres":true}
 
 ## Endpoints principales
 
-| Metodo | Endpoint | Descripcion |
-|--------|----------|-------------|
-| `POST` | `/incident` | Reportar un incidente (el agente responde con diagnostico y recomendaciones) |
-| `GET` | `/conversation` | Ver el historial de mensajes de la sesion actual |
-| `DELETE` | `/conversation` | Reiniciar la conversacion (nueva sesion) |
-| `POST` | `/documents/ingest/pdf` | Ingestar un PDF en la base de conocimiento RAG. Responde **`202 Accepted`** con un `job_id`: el trabajo corre en segundo plano |
-| `GET` | `/documents/ingest/{job_id}` | Progreso de una ingesta (`en_proceso` / `completado` / `error`) |
-| `POST` | `/incidents/historical` | Agregar un incidente resuelto a la base vectorial |
-| `GET` | `/health` | Liveness. Responde 200 mientras el proceso este vivo, sin tocar dependencias |
-| `GET` | `/ready` | Readiness. **503** si PostgreSQL no responde o el grafo no compilo |
-| `GET` | `/metrics` | Metricas en formato Prometheus |
+| Metodo | Endpoint | Acceso | Descripcion |
+|--------|----------|--------|-------------|
+| `POST` | `/incident` | API key | Reportar un incidente (el agente responde con diagnostico y recomendaciones) |
+| `GET` | `/conversation` | API key | Ver el historial de mensajes de la conversacion actual |
+| `DELETE` | `/conversation` | API key | Reiniciar la conversacion (emite un identificador nuevo) |
+| `POST` | `/documents/ingest/pdf` | **admin** | Ingestar un PDF en la base de conocimiento RAG. Responde **`202 Accepted`** con un `job_id`: el trabajo corre en segundo plano |
+| `GET` | `/documents/ingest/{job_id}` | **admin** | Progreso de una ingesta (`en_proceso` / `completado` / `error`) |
+| `POST` | `/incidents/historical` | **admin** | Agregar un incidente resuelto a la base vectorial |
+| `GET` | `/health` | abierto | Liveness. Responde 200 mientras el proceso este vivo, sin tocar dependencias |
+| `GET` | `/ready` | abierto | Readiness. **503** si PostgreSQL no responde o el grafo no compilo |
+| `GET` | `/metrics` | abierto | Metricas en formato Prometheus |
+
+Las tres ultimas quedan abiertas a proposito: las consulta el orquestador, no un cliente. Si `/health` pidiera credenciales, Kubernetes no podria comprobar el pod. Por lo mismo estan exentas del rate limiting: un 429 ahi se leeria como "el pod no responde" y reiniciaria instancias sanas justo en el pico de carga.
+
+### Forma de los errores
+
+Ningun error devuelve el texto de la excepcion. El cuerpo es siempre el mismo sobre:
+
+```json
+{"error": {"codigo": "proveedor_no_disponible", "mensaje": "El servicio de analisis esta saturado. Reintenta en unos segundos.", "error_id": "74d76f62b6de"}}
+```
+
+| Status | Cuando | Cabecera |
+|--------|--------|----------|
+| `400` | La peticion no es valida | |
+| `401` | Falta `X-API-Key` o no es valida | |
+| `403` | La clave es valida pero no tiene rol de admin | |
+| `429` | Se supero el limite de peticiones del tenant | `Retry-After` |
+| `503` | El proveedor del LLM devolvio 429, hubo timeout, o PostgreSQL no responde | `Retry-After` |
+| `500` | Fallo no previsto | |
+
+El `error_id` es el puente con el log: es lo unico tecnico que viaja al cliente, y buscandolo en los logs aparece la cadena de excepciones completa hasta la causa original. **Un 429 del proveedor sale como 503, no como 500**, porque la diferencia es operativa: un 500 dice "tu peticion esta mal, no la repitas" y un 503 con `Retry-After` dice "no es tu culpa, vuelve en N segundos".
 
 La ingesta de PDF dejo de ser sincrona: antes bloqueaba el proceso entero mientras vectorizaba —un manual de 100 paginas congelaba el servicio varios minutos— y ahora devuelve el `job_id` de inmediato. El tamano maximo de subida se configura con `MAX_PDF_MB` (20 por defecto).
 
@@ -300,15 +366,17 @@ docker compose down -v
 
 ```
 1. git clone <repo>
-2. Crear .env con OPENAI_API_KEY y POSTGRES_URL
+2. cp .env.example .env  y completar OPENAI_API_KEY, POSTGRES_URL y SESSION_SECRET
 3. docker compose up -d
 4. python -m venv venv && activar el venv && pip install -r requirements.txt
 5. python scripts/migrate.py
 6. python seed.py
-7. Arrancar (con el interprete del venv, que es lo que no falla):
+7. python scripts/gestionar_tenants.py crear demo   -> guardar la API key que imprime
+8. Arrancar (con el interprete del venv, que es lo que no falla):
      Linux/Mac -> ./venv/bin/python -m uvicorn main:app --reload
      Windows   -> ./venv/Scripts/python.exe -m uvicorn main:app --reload --loop asyncio:SelectorEventLoop
-8. Comprobar: curl http://127.0.0.1:8000/ready  ->  {"grafo":true,"postgres":true}
+9. Comprobar: curl http://127.0.0.1:8000/ready  ->  {"grafo":true,"postgres":true}
+10. Probar: curl -X POST .../incident -H "X-API-Key: iras_..." -d '{"user_input":"..."}' 
 ```
 
 **El venv no es opcional.** Si no esta activo, tanto `python` como `uvicorn` resuelven a los del sistema y todo falla con `ModuleNotFoundError: No module named 'prometheus_client'`. Parece que falta instalar algo, pero lo que falla es el interprete: el Python del sistema tiene `uvicorn`, `fastapi` y `psycopg_pool` de antes, y solo le falta ese paquete, asi que el error aparece tarde y despista. Por eso los comandos de arriba invocan el interprete del venv de forma explicita.

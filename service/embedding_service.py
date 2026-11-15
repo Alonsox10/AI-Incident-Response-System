@@ -1,11 +1,23 @@
 from langchain_openai import OpenAIEmbeddings
 from loguru import logger
 from dotenv import load_dotenv
+import os
 
 load_dotenv(override=True)
 
+# Mismo criterio que en models/llm.py: sin timeout explícito se hereda el del SDK,
+# que ronda los 10 minutos. Los embeddings son más rápidos que una generación, pero
+# la ingesta en lote puede pedir cientos de fragmentos en una sola llamada, así que
+# el margen se mantiene igual de holgado.
+EMBEDDINGS_TIMEOUT = float(os.getenv("EMBEDDINGS_TIMEOUT", "30"))
+EMBEDDINGS_MAX_RETRIES = int(os.getenv("EMBEDDINGS_MAX_RETRIES", "3"))
+
 # text-embedding-3-small: 1536 dimensiones, económico y preciso
-_embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+_embeddings = OpenAIEmbeddings(
+    model="text-embedding-3-small",
+    timeout=EMBEDDINGS_TIMEOUT,
+    max_retries=EMBEDDINGS_MAX_RETRIES,
+)
 
 
 async def get_embedding(text: str) -> list[float]:

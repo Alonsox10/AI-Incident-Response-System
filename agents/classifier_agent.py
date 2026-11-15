@@ -4,6 +4,7 @@ from loguru import logger
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from state.state import IncidentState
 from schemas.models import IncidentClassificationOutput
+from service.errors import ErrorDelClasificador
 
 llm_structured = llm.with_structured_output(IncidentClassificationOutput)
 
@@ -56,6 +57,6 @@ async def classifier_agent(state: IncidentState):
         }
     except Exception as e:
         logger.error(f"Error en el agente clasificador: {e}")
-        raise ValueError("Ocurrió un error en el agente clasificador.")
+        raise ErrorDelClasificador("Ocurrió un error en el agente clasificador.") from e
 
     
