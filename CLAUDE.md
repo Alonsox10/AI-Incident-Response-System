@@ -90,6 +90,7 @@ Variables de entorno en `.env` (plantilla completa y comentada en `.env.example`
 - `SESSION_SECRET` firma la cookie de conversación. Si falta, en desarrollo se genera uno efímero y el arranque avisa; con `APP_ENTORNO=produccion` el arranque **falla**, porque sin un valor fijo y compartido cada reinicio invalida las cookies y cada réplica firma distinto. `APP_ENTORNO=produccion` activa además el flag `Secure` de la cookie.
 - Resiliencia (opcionales): `LLM_TIMEOUT`/`LLM_MAX_RETRIES`, `EMBEDDINGS_TIMEOUT`/`EMBEDDINGS_MAX_RETRIES` (30 s y 3 por defecto) y `GRAFO_PRESUPUESTO_SEGUNDOS` (120), que es el tope del workflow completo.
 - Límites y CORS (opcionales): `RATE_LIMIT_INCIDENTES` (30/minute), `RATE_LIMIT_INGESTA` (5/minute), `RATE_LIMIT_GENERAL` (120/minute) y `CORS_ORIGENES` (vacío por defecto; nunca `*`, que con credenciales no es válido).
+- Seguridad (opcionales): `AUTH_HABILITADA` (**`false` por defecto** fuera de producción — ver el aviso de arriba antes de cambiarla), `APP_ENTORNO` (`desarrollo`) y `MAX_PDF_MB` (20).
 - Observabilidad (opcionales): `LOG_JSON` (default `true`), `LOG_LEVEL`, `LLM_COSTO_ENTRADA_POR_1M` y `LLM_COSTO_SALIDA_POR_1M` (ambas 0 por defecto).
 - **LangSmith está desactivado** desde la Fase 0: las claves siguen en el `.env` comentadas. La trazabilidad la cubren ahora los logs JSON con `request_id` y las métricas de `/metrics`.
 - Umbrales del camino de FAQ (opcionales): `FAQ_HIGH_CONFIDENCE_THRESHOLD` (default 0.75) y `FAQ_ROUTING_THRESHOLD` (default 0.85). Ver la sección de arquitectura: están separados a propósito.
@@ -167,6 +168,9 @@ pytest tests/unit/test_classifier.py::test_nombre_del_test   # un solo test
 pytest tests/integration                  # solo integración
 ```
 
+**102 tests al cerrar la Fase 2** (80 unitarios + 22 de integración), en ~2 s. Si tarda
+mucho más que eso, algo está saliendo a la red — ver la hermeticidad más abajo.
+
 **La suite es hermética y debe seguir siéndolo.** `tests/conftest.py` hace dos cosas, en este orden exacto, antes de cualquier import de LangChain/OpenAI:
 
 1. Neutraliza `dotenv.load_dotenv` (`dotenv.load_dotenv = lambda *a, **k: False`).
@@ -219,7 +223,7 @@ Correr ambas antes/después de cambiar un prompt, un umbral o el modelo. Al agre
 
 ### Flujo de un incidente
 
-`POST /incident` (`main.py`) autentica al tenant por `X-API-Key`, deriva el `thread_id` de la identidad más la cookie de conversación, arma el `IncidentState` (nuevo o incremental) y hace `await get_app().ainvoke(...)` —dentro de un `asyncio.wait_for` con el presupuesto total— sobre el grafo de LangGraph, que se compila en el `lifespan` con `AsyncPostgresSaver`.
+`POST /incident` (`main.py`) resuelve la identidad (el tenant de la `X-API-Key`, o `TENANT_ANONIMO` con la autenticación apagada), deriva el `thread_id` de esa identidad más la cookie de conversación, arma el `IncidentState` (nuevo o incremental) y hace `await get_app().ainvoke(...)` —dentro de un `asyncio.wait_for` con el presupuesto total— sobre el grafo de LangGraph, que se compila en el `lifespan` con `AsyncPostgresSaver`.
 
 El grafo **no tiene un flujo lineal fijo**: el nodo `orchestrator` es el entry point y se re-visita después de cada agente para decidir el siguiente paso:
 
@@ -282,7 +286,10 @@ Lo mismo vale para las tools: las ejecuta el `ToolNode`, así que las cuatro son
   `get_app()`, que falla con un mensaje claro si nadie lo inicializó.
 - **El esquema no se aplica en runtime**: lo hace `scripts/migrate.py`, que registra cada
   `.sql` en `schema_migrations`. Corren en **orden alfabético**, así que cada migración
-  debe bastarse sola — por eso `faq_schema.sql` repite su `CREATE EXTENSION vector`.
+  debe bastarse sola — por eso `faq_schema.sql` repite su `CREATE EXTENSION vector`. Hoy
+  son tres: `auth_schema.sql` (la tabla `tenants`, primera por orden alfabético),
+  `faq_schema.sql` y `vector_schema.sql`. `queris.sql` es un archivo de apuntes y el
+  script lo excluye explícitamente.
 
 > Si `get_pool()` falla, el pool **no** queda registrado. psycopg cierra el pool cuando
 > `open()` agota el timeout, y conservar esa referencia dejaba el proceso muerto para
@@ -301,6 +308,15 @@ Las tres usan similarity search por coseno con un umbral (`similarity_threshold=
 ### Prompts
 
 Cada agente lee su system prompt desde un `.md` en `prompt/` en cada invocación (no se cachean en memoria) — para cambiar el comportamiento de un agente, edita el `.md` correspondiente, no hace falta tocar el código Python del agente.
+
+> **Consecuencia para el contenedor: `prompt/*.md` tiene que estar dentro de la imagen.** El `.dockerignore` excluía `*.md` y `docs/`, así que la imagen se construía sin un solo prompt y el grafo habría fallado al primer request con un `FileNotFoundError`. No se notaba porque en esta máquina la app corre siempre desde el venv, nunca desde el contenedor. Hoy solo se excluye `docs/*.md` — ojo al tocar ese archivo, porque el fallo no aparece hasta que alguien levanta la imagen.
+
+### Código muerto conocido
+
+No es descubrimiento nuevo: está catalogado y su borrado es la tarea 7 de la Fase 3. Si lo encuentras, no lo documentes como parte del diseño ni construyas nada encima.
+
+- **`service/conversation_service.py` no lo importa nadie** (0% de cobertura). El historial lo maneja el checkpointer de LangGraph; este archivo hace creer que hay una capa de servicio que no existe.
+- **`search_incident_by_category`** sigue bindeada en `models/llm.py` y en el `ToolNode` aunque el prompt de recomendación no la pide. Es la cuarta tool y cuenta para el "las cuatro son `async`" de más arriba.
 
 ### Borde de seguridad
 
@@ -345,7 +361,9 @@ Detalle de lo verificado y lo que quedó abierto: [`docs/seguridad-fase2.md`](do
 
 `LOG_JSON=false` devuelve la salida legible de siempre. Los tests y los scripts de evaluación no llaman a `configurar_logging()`, así que conservan el formato de texto.
 
-Todos los agentes/tools usan `loguru` con prefijos identificando el componente: `[ORQUESTADOR]`, `[CLASIFICADOR]`, `[RECOMENDACION]`, `[FAQ]`, `[FAQ-LOADER]`, `[NODO]`, `[DB]`, `[RAG-KB]`, `[RAG-HIST]`. Se loguea duración de las llamadas al LLM/DB con `time.perf_counter()`.
+Todos los agentes/tools usan `loguru` con prefijos identificando el componente: `[ORQUESTADOR]`, `[CLASIFICADOR]`, `[RECOMENDACION]`, `[FAQ]`, `[FAQ-LOADER]`, `[NODO]`, `[DB]`, `[RAG-KB]`, `[RAG-HIST]`, y desde el borde `[REQUEST]`, `[AUTH]`, `[INGESTA]`, `[LIMITE]`, `[ERROR]`, `[ARRANQUE]`, `[READY]`. Se loguea duración de las llamadas al LLM/DB con `time.perf_counter()`.
+
+> **El campo de log se llama `session_id` pero desde la Fase 2 lleva el `conversacion_id`.** El `contextvar` conservó el nombre viejo; lo que cambió es qué se le mete. No lleva el `thread_id`, que es un hash y no serviría para correlacionar a ojo, ni el tenant. Si buscas en los logs por el identificador que devuelve la API en `conversacion_id`, el campo que coincide es `session_id`.
 
 Los logs son la forma más rápida de ver qué camino tomó una consulta: `[ORQUESTADOR] Decision: faq | match documentado=93%` indica que resolvió el pre-chequeo sin LLM, y `[FAQ] Coincidencia directa` que devolvió la respuesta almacenada sin generar texto.
 
