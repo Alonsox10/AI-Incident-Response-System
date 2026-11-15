@@ -35,11 +35,11 @@ Su regla de operación es estricta y manda sobre cualquier iniciativa propia:
 |---|---|---|
 | 0 | Instrumentar y medir | ✅ cerrada |
 | 1 | Concurrencia y conexiones | ✅ cerrada |
-| 2 | Resiliencia y seguridad | 🟡 implementada, pendiente del OK de cierre |
+| 2 | Resiliencia y seguridad | ✅ cerrada |
 | 3 | Costo y calidad | ⬜ pendiente |
 | 4 | Pre-producción | ⬜ pendiente |
 
-Las notas de cierre de cada fase viven en el propio plan: qué criterios quedaron parciales y por qué, las decisiones tomadas y los hallazgos. **Leerlas antes de empezar la Fase 3.** Dos de la Fase 1 siguen vigentes: que el techo de carga es la cuota del proveedor y no el código, y que la recuperación automática ante caída de Postgres quedó verificada solo con tests, no contra una base real. De la Fase 2, lo que queda abierto está en [`docs/seguridad-fase2.md`](docs/seguridad-fase2.md): el tope de gasto diario con alerta no se implementó, el 429 real del proveedor no se reprodujo end-to-end, y la imagen Docker no se construyó.
+Las notas de cierre de cada fase viven en el propio plan: qué criterios quedaron parciales y por qué, las decisiones tomadas y los hallazgos. **Leerlas antes de empezar la Fase 3.** Dos de la Fase 1 siguen vigentes: que el techo de carga es la cuota del proveedor y no el código, y que la recuperación automática ante caída de Postgres quedó verificada solo con tests, no contra una base real. De la Fase 2 quedan tres cosas abiertas, detalladas en [`docs/seguridad-fase2.md`](docs/seguridad-fase2.md): el tope de gasto diario con alerta no se implementó, el 429 real del proveedor no se reprodujo end-to-end y la imagen Docker no se construyó. La cuarta no es un pendiente sino una decisión: **la autenticación está apagada por defecto a pedido del dueño del repo**, así que B6 quedó cerrado solo a medias y a conciencia.
 
 ## Comandos
 
