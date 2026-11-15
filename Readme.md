@@ -166,9 +166,23 @@ Salida esperada:
 
 ---
 
-## 5.1. Emitir una API key
+## 5.1. Autenticacion (opcional, apagada por defecto)
 
-Desde la Fase 2 **la API exige autenticacion**: sin una clave, `/incident` responde `401`. Las claves se emiten con un script, porque la base guarda solo su SHA-256 y la clave en claro existe una unica vez, en la salida del comando.
+**La API es abierta de fabrica.** Clonas, arrancas y pruebas: no hay que crear tenants, ni mandar cabeceras, ni configurar nada.
+
+```bash
+curl -X POST http://127.0.0.1:8000/incident   -H "Content-Type: application/json"   -d '{"user_input":"La VPN de la sucursal norte dejo de conectar"}'
+```
+
+Apagada, cada peticion corre como un tenant anonimo con rol de admin, asi que tambien funcionan la ingesta de PDFs y la carga de incidentes historicos. Lo que **si** sigue protegido es la conversacion: la cookie `conversacion` va firmada con HMAC y el `thread_id` se deriva de ella, no es su valor, asi que dos navegadores distintos no se ven el historial y manipular la cookie a mano no alcanza el de nadie.
+
+### Encenderla
+
+```env
+AUTH_HABILITADA=true
+```
+
+Entonces cada peticion exige la cabecera `X-API-Key`, y `/documents/ingest/pdf`, `/documents/ingest/{job_id}` e `/incidents/historical` exigen rol de administrador. Las claves se emiten con un script, porque la base guarda solo su SHA-256 y la clave en claro existe una unica vez, en la salida del comando:
 
 ```bash
 python scripts/gestionar_tenants.py crear demo            # tenant normal
@@ -178,25 +192,23 @@ python scripts/gestionar_tenants.py rotar demo            # invalida la anterior
 python scripts/gestionar_tenants.py desactivar demo
 ```
 
-La clave se manda en la cabecera `X-API-Key`:
-
 ```bash
 curl -X POST http://127.0.0.1:8000/incident   -H "X-API-Key: iras_..."   -H "Content-Type: application/json"   -d '{"user_input":"La VPN de la sucursal norte dejo de conectar"}'
 ```
 
-Los scripts de carga y de evaluacion la leen de la variable `API_KEY` y se niegan a correr sin ella: una corrida sin credencial mediria cuantos `401` por segundo aguanta el servicio, que no es lo que interesa.
+Los scripts de carga y de evaluacion mandan la cabecera solo si existe la variable `API_KEY`, asi que funcionan en los dos modos:
 
 ```bash
 export API_KEY=iras_...      # Windows: $env:API_KEY = "iras_..."
 ```
 
-> **El rol no es burocracia.** `/documents/ingest/pdf` y `/incidents/historical` escriben en las tablas que alimentan el RAG del agente de recomendacion. Antes eran publicos, asi que cualquiera podia inyectar contenido arbitrario en la base que el agente usa para responderle a todos: en la practica, prompt injection persistente contra el sistema entero.
+> **Con `APP_ENTORNO=produccion` la autenticacion se enciende sola**, y pedir `AUTH_HABILITADA=false` ahi hace fallar el arranque con un mensaje explicando por que. El motivo es `/documents/ingest/pdf`: lo que escribe acaba en `knowledge_base`, que es lo que el agente de recomendacion consulta para responderle a todos. Dejarlo abierto de cara a internet es inyectar contenido arbitrario en la base que usa el agente — en la practica, prompt injection persistente contra el sistema entero. Eso no deberia conseguirse olvidando una variable.
 
-### La conversacion ya no se identifica con la cookie
+### Por que el `thread_id` no es la cookie
 
-La cookie `session_id` era el `thread_id` del checkpointer, sin firma y sin `HttpOnly`. Ponerla a mano con el UUID de otra persona devolvia su historial completo de incidentes.
+La cookie `session_id` **era** el `thread_id` del checkpointer, sin firma y sin `HttpOnly`. Ponerla a mano con el UUID de otra persona devolvia su historial completo de incidentes.
 
-Ahora la cookie se llama `conversacion`, va firmada con HMAC y con `HttpOnly; SameSite=Lax` (mas `Secure` cuando `APP_ENTORNO=produccion`), y el `thread_id` **se deriva del tenant autenticado mas el identificador de conversacion**. Lo que cierra el agujero es la derivacion, no la firma: la misma cookie en manos de otro tenant resuelve a otro hilo, asi que la conversacion ajena no es inalcanzable por estar protegida, es inalcanzable porque no se puede nombrar.
+Ahora la cookie se llama `conversacion`, va firmada y con `HttpOnly; SameSite=Lax` (mas `Secure` cuando `APP_ENTORNO=produccion`), y el `thread_id` se deriva de `sha256(tenant_id:conversacion_id)`. Con la autenticacion encendida, eso significa que la misma cookie en manos de otro tenant resuelve a otro hilo: la conversacion ajena no es inalcanzable por estar protegida, es inalcanzable porque no se puede nombrar.
 
 ---
 
@@ -285,7 +297,9 @@ curl http://127.0.0.1:8000/ready     # debe dar {"grafo":true,"postgres":true}
 | `GET` | `/ready` | abierto | Readiness. **503** si PostgreSQL no responde o el grafo no compilo |
 | `GET` | `/metrics` | abierto | Metricas en formato Prometheus |
 
-Las tres ultimas quedan abiertas a proposito: las consulta el orquestador, no un cliente. Si `/health` pidiera credenciales, Kubernetes no podria comprobar el pod. Por lo mismo estan exentas del rate limiting: un 429 ahi se leeria como "el pod no responde" y reiniciaria instancias sanas justo en el pico de carga.
+La columna **Acceso** describe el modo con `AUTH_HABILITADA=true`. Con la bandera apagada —el default— todo lo que no diga "abierto" tampoco pide credenciales.
+
+Las tres ultimas quedan abiertas en los dos modos a proposito: las consulta el orquestador, no un cliente. Si `/health` pidiera credenciales, Kubernetes no podria comprobar el pod. Por lo mismo estan exentas del rate limiting: un 429 ahi se leeria como "el pod no responde" y reiniciaria instancias sanas justo en el pico de carga.
 
 ### Forma de los errores
 
@@ -298,7 +312,7 @@ Ningun error devuelve el texto de la excepcion. El cuerpo es siempre el mismo so
 | Status | Cuando | Cabecera |
 |--------|--------|----------|
 | `400` | La peticion no es valida | |
-| `401` | Falta `X-API-Key` o no es valida | |
+| `401` | Falta `X-API-Key` o no es valida (solo con `AUTH_HABILITADA=true`) | |
 | `403` | La clave es valida pero no tiene rol de admin | |
 | `429` | Se supero el limite de peticiones del tenant | `Retry-After` |
 | `503` | El proveedor del LLM devolvio 429, hubo timeout, o PostgreSQL no responde | `Retry-After` |
@@ -371,12 +385,12 @@ docker compose down -v
 4. python -m venv venv && activar el venv && pip install -r requirements.txt
 5. python scripts/migrate.py
 6. python seed.py
-7. python scripts/gestionar_tenants.py crear demo   -> guardar la API key que imprime
-8. Arrancar (con el interprete del venv, que es lo que no falla):
+7. Arrancar (con el interprete del venv, que es lo que no falla):
      Linux/Mac -> ./venv/bin/python -m uvicorn main:app --reload
      Windows   -> ./venv/Scripts/python.exe -m uvicorn main:app --reload --loop asyncio:SelectorEventLoop
-9. Comprobar: curl http://127.0.0.1:8000/ready  ->  {"grafo":true,"postgres":true}
-10. Probar: curl -X POST .../incident -H "X-API-Key: iras_..." -d '{"user_input":"..."}' 
+8. Comprobar: curl http://127.0.0.1:8000/ready  ->  {"grafo":true,"postgres":true}
+9. Probar: curl -X POST .../incident -H "Content-Type: application/json" -d '{"user_input":"..."}'
+   (sin credenciales: la API es abierta por defecto, ver 5.1)
 ```
 
 **El venv no es opcional.** Si no esta activo, tanto `python` como `uvicorn` resuelven a los del sistema y todo falla con `ModuleNotFoundError: No module named 'prometheus_client'`. Parece que falta instalar algo, pero lo que falla es el interprete: el Python del sistema tiene `uvicorn`, `fastapi` y `psycopg_pool` de antes, y solo le falta ese paquete, asi que el error aparece tarde y despista. Por eso los comandos de arriba invocan el interprete del venv de forma explicita.

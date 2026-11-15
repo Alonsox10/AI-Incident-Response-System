@@ -85,21 +85,16 @@ def call_incident_api(base_url: str, user_input: str, timeout: int = 120) -> dic
     (cada invocación usa una request nueva sin sesión previa), de modo que cada
     caso del dataset arranca una conversación nueva y aislada en el grafo.
 
-    Desde la Fase 2 el endpoint exige `X-API-Key`: la credencial sale de la variable
-    de entorno `API_KEY`, que se emite con `scripts/gestionar_tenants.py`.
+    Si el servidor corre con `AUTH_HABILITADA=true`, la credencial sale de la variable
+    de entorno `API_KEY`. Por defecto la API es abierta y no hace falta: la cabecera se
+    manda solo cuando hay clave, porque una vacía daría 401 en cada caso.
     """
     api_key = os.getenv("API_KEY")
-    if not api_key:
-        raise SystemExit(
-            "Falta API_KEY. /incident exige autenticación desde la Fase 2.
-"
-            "  python scripts/gestionar_tenants.py crear evaluacion"
-        )
 
     resp = requests.post(
         f"{base_url}/incident",
         json={"user_input": user_input},
-        headers={"X-API-Key": api_key},
+        headers={"X-API-Key": api_key} if api_key else {},
         timeout=timeout,
     )
     resp.raise_for_status()

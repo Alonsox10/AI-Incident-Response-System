@@ -19,6 +19,18 @@ propio tenant— pero el aislamiento entre tenants no depende de ella.
 
 La firma usa `hmac` de la biblioteca estándar en vez de `itsdangerous`: es una cookie
 con un solo campo, y no vale una dependencia más.
+
+**La autenticación viene apagada de fábrica** (`AUTH_HABILITADA=false`), para que quien
+clone el repo pueda probar el agente con un `curl` sin crear tenants ni configurar nada.
+Apagada, toda petición corre como un tenant anónimo con rol de admin y el `thread_id` se
+sigue derivando —de ese tenant fijo más la cookie firmada—, así que la conversación ajena
+continúa sin ser alcanzable manipulando la cookie: lo que se pierde es el aislamiento
+*entre clientes distintos* y la puerta de admin en la ingesta al RAG, no la firma.
+
+Con `APP_ENTORNO=produccion` el valor por defecto se invierte a `true`, y pedir
+explícitamente `AUTH_HABILITADA=false` ahí es un fallo de arranque: desplegar de cara a
+internet con la ingesta del RAG abierta no debería ser algo que se consiga olvidando una
+variable.
 """
 from __future__ import annotations
 
@@ -60,6 +72,26 @@ if not _SECRETO:
 # por entorno en vez de dejarlo fijo en un valor que obligue a desactivarlo a mano.
 COOKIE_SECURE = _ENTORNO == "produccion"
 
+# Apagada en desarrollo, encendida en producción. El default depende del entorno en vez
+# de ser fijo porque las dos situaciones quieren cosas opuestas: clonar el repo y probar
+# en un minuto, o no exponer la ingesta del RAG a internet.
+_AUTH_DEFAULT = "true" if _ENTORNO == "produccion" else "false"
+AUTH_HABILITADA = os.getenv("AUTH_HABILITADA", _AUTH_DEFAULT).lower() in ("true", "1", "yes")
+
+if _ENTORNO == "produccion" and not AUTH_HABILITADA:
+    raise RuntimeError(
+        "AUTH_HABILITADA=false con APP_ENTORNO=produccion: eso deja /documents/ingest/pdf "
+        "y /incidents/historical abiertos, y lo que escriben alimenta el RAG de todos los "
+        "usuarios. Si de verdad hace falta, cambia APP_ENTORNO."
+    )
+
+if not AUTH_HABILITADA:
+    logger.warning(
+        "[AUTH] Autenticación DESACTIVADA: toda petición corre como tenant anónimo con "
+        "rol de admin. Es el default para poder probar el repo recién clonado; actívala "
+        "con AUTH_HABILITADA=true antes de exponer la API."
+    )
+
 
 @dataclass(frozen=True)
 class Tenant:
@@ -72,6 +104,12 @@ class Tenant:
     @property
     def es_admin(self) -> bool:
         return self.rol == "admin"
+
+
+# Identidad que se usa con la autenticación apagada. Tiene `id` fijo, así que el
+# `thread_id` sigue derivándose igual —de este id más la cookie firmada— y las
+# conversaciones no se pisan entre navegadores distintos.
+TENANT_ANONIMO = Tenant(id=0, nombre="anonimo", rol="admin")
 
 
 # ─── API keys ────────────────────────────────────────────────────────────────
@@ -114,7 +152,16 @@ async def _buscar_tenant(api_key: str) -> Tenant | None:
 
 
 async def tenant_actual(x_api_key: str | None = Header(default=None)) -> Tenant:
-    """Dependencia de FastAPI: exige una API key válida y devuelve el tenant."""
+    """
+    Dependencia de FastAPI: exige una API key válida y devuelve el tenant.
+
+    Con la autenticación apagada devuelve el tenant anónimo sin tocar la base. El
+    atajo va antes de mirar la cabecera a propósito: si no, una clave cualquiera
+    mandada por costumbre haría fallar una instalación que se supone abierta.
+    """
+    if not AUTH_HABILITADA:
+        return TENANT_ANONIMO
+
     if not x_api_key:
         raise NoAutenticado("Falta la cabecera X-API-Key.")
 
@@ -130,7 +177,13 @@ async def tenant_actual(x_api_key: str | None = Header(default=None)) -> Tenant:
 
 
 async def tenant_admin(x_api_key: str | None = Header(default=None)) -> Tenant:
-    """Igual que `tenant_actual`, pero además exige rol de administrador."""
+    """
+    Igual que `tenant_actual`, pero además exige rol de administrador.
+
+    Con la autenticación apagada el tenant anónimo tiene rol de admin, así que la
+    ingesta de documentos también funciona recién clonado el repo. Es exactamente lo
+    que la bandera concede, y el motivo de que no pueda quedarse encendida en producción.
+    """
     tenant = await tenant_actual(x_api_key)
     if not tenant.es_admin:
         logger.warning(f"[AUTH] Operación de admin denegada | tenant={tenant.nombre}")

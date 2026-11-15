@@ -54,7 +54,27 @@ sin LLM ni Postgres, y una regresión futura lo rompe en rojo.
 
 ---
 
-## 2. Autenticación: API key por tenant
+## 2. Autenticación: API key por tenant, apagada por defecto
+
+> **Decisión del 2026-11-15, posterior a la implementación.** El dueño del repo pidió que
+> cualquiera que clone el proyecto pueda probar el agente sin configurar nada, así que la
+> autenticación quedó **detrás de una bandera y apagada de fábrica**
+> (`AUTH_HABILITADA=false`) en vez de eliminarse.
+>
+> Apagada, toda petición corre como un tenant anónimo (`id=0`) con rol de admin: los
+> endpoints de ingesta vuelven a estar abiertos, que es media mitad del hallazgo B6
+> reabierta a cambio de poder probar en un minuto. Lo que **no** se pierde es el otro
+> medio: el `thread_id` se sigue derivando de ese id fijo más la cookie firmada, así que
+> dos navegadores no se ven el historial y manipular la cookie no alcanza el de nadie.
+>
+> Con `APP_ENTORNO=produccion` el default se invierte a `true` y pedir `false` ahí es un
+> `RuntimeError` al arrancar. Esa asimetría es deliberada: el modo cómodo es el default
+> donde ser cómodo no cuesta nada, y es inalcanzable por olvido donde sí costaría.
+>
+> Los tres modos se verificaron en vivo: abierta devuelve 200 sin cabeceras (y también
+> con una clave inventada, porque el atajo va antes de mirarla); con
+> `AUTH_HABILITADA=true` la misma petición da 401 y con la clave real 200; y
+> `APP_ENTORNO=produccion` + `AUTH_HABILITADA=false` no arranca.
 
 Se eligió API key sobre JWT: la API es de servicio a servicio, no hay frontend con
 usuarios finales, y el JWT habría obligado a decidir refresh tokens y rotación de la
@@ -72,6 +92,8 @@ clave de firma, que el plan no cubre.
   exigen `rol = admin`.
 - `/health`, `/ready` y `/metrics` quedan abiertos: los consulta el orquestador. Si
   `/health` pidiera credenciales, Kubernetes no podría comprobar el pod.
+
+Con `AUTH_HABILITADA=true`:
 
 | Prueba | Esperado | Obtenido |
 |---|---|---|
@@ -242,7 +264,12 @@ con `allow_credentials=True` no es válido, y la cookie de conversación tiene q
 | Cambiar la cookie a mano no da acceso a la conversación de otro | ✅ verificado en vivo con dos tenants + test |
 | Ningún secreto en el repo (`git grep` limpio) | ✅ compose, README y comentarios limpiados |
 | Imagen sin `gcc`, sin root, con healthcheck | ✅ multi-stage, uid 10001, `HEALTHCHECK` |
-| `pytest` y golden dataset sin cambios | ✅ 95 tests (56 → 95); golden 30/30 y 25/30, igual |
+| `pytest` y golden dataset sin cambios | ✅ 102 tests (56 → 102); golden 30/30 y 25/30, igual |
+
+Los criterios de autenticación se cumplen **con la bandera encendida**. Con el default
+apagado, los dos que dependen de credenciales (`401`/`403` y el aislamiento entre
+tenants) no aplican por diseño; el del IDOR sobre la cookie sí sigue cumpliéndose en los
+dos modos, porque no depende de la autenticación.
 
 **El golden dataset no se movió**: 30/30 en categoría y 25/30 en prioridad, con los
 mismos cinco casos de siempre (GD-06, GD-18, GD-21, GD-24, GD-30) y en la misma

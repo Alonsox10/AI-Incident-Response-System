@@ -62,16 +62,24 @@ python -m venv venv && venv\Scripts\activate   # Windows; source venv/bin/activa
 pip install -r requirements.txt
 python scripts/migrate.py      # aplica el esquema (idempotente, registra lo aplicado)
 python seed.py                 # carga datos: PDFs de docs/knowledge/, incidentes históricos y faqs.md
-python scripts/gestionar_tenants.py crear demo   # emite una API key: sin ella la API da 401
 ```
 
-> **Desde la Fase 2 la API exige autenticación y no hay forma de saltársela.** Sin una
-> API key, `/incident` responde 401, y eso incluye al golpe de curl de prueba, a
-> `loadtest/locustfile.py` y a `evaluation/run_eval.py` —los dos últimos se niegan a
-> arrancar sin la variable `API_KEY`, porque una corrida sin credencial mediría cuántos
-> 401 por segundo aguanta el servicio—. La clave en claro se imprime **una sola vez**:
-> la base guarda solo su SHA-256, así que si se pierde se rota (`gestionar_tenants.py
-> rotar <nombre>`), no se recupera.
+> **La API es abierta por defecto, y es una decisión, no un olvido.** El dueño del repo
+> pidió explícitamente (2026-11-15) que cualquiera que clone el proyecto pueda probar el
+> agente sin configurar nada, así que `AUTH_HABILITADA=false` es el default y toda
+> petición corre como un tenant anónimo con rol de admin. **No "arreglar" esto poniéndolo
+> en `true`.**
+>
+> Con `AUTH_HABILITADA=true` cada petición exige `X-API-Key` y los endpoints de ingesta
+> exigen rol de admin; las claves se emiten con
+> `python scripts/gestionar_tenants.py crear <nombre>` y la clave en claro se imprime
+> **una sola vez** (la base guarda solo su SHA-256, así que se rota, no se recupera).
+> `loadtest/locustfile.py` y `evaluation/run_eval.py` mandan la cabecera solo si existe
+> la variable `API_KEY`, así que sirven en los dos modos.
+>
+> Con `APP_ENTORNO=produccion` el default se invierte a `true` y pedir `false` ahí es un
+> `RuntimeError` al arrancar: lo que escribe `/documents/ingest/pdf` alimenta el RAG de
+> todos los usuarios, y eso no debería quedar abierto por olvidar una variable.
 
 > **Hay dos PostgreSQL en esta máquina y el `docker compose` es una pista falsa.** El puerto 5432 lo sirve un **PostgreSQL 17 nativo de Windows** (servicio `postgresql-x64-17`), no el contenedor `pgvector/pgvector:pg16` del compose — y es el nativo el que tiene todos los datos. El contenedor puede estar `Up (healthy)` sin que nadie le hable: comprobado el 2026-11-07, con el contenedor arriba y `SHOW server_version` devolviendo `17.10`.
 >
@@ -165,6 +173,11 @@ pytest tests/integration                  # solo integración
 2. Fija `OPENAI_API_KEY`/`POSTGRES_URL` dummy con `os.environ.setdefault`.
 
 El paso 1 no es opcional: `database/db.py`, `models/llm.py` y `service/embedding_service.py` llaman `load_dotenv(override=True)` a nivel de import, lo que **pisaba los dummies con las credenciales reales del `.env`** y hacía que la suite gastara API de OpenAI y consultara el Postgres real sin que se notara. Que los tests pasen con credenciales bogus es la prueba de que nadie sale a la red — si alguna vez la suite empieza a tardar varios segundos de más, sospecha de esto.
+
+Los tests que ejercitan credenciales usan un fixture `auth_encendida` que parchea
+`service.auth.AUTH_HABILITADA`. Es obligatorio: con el default apagado, `tenant_actual`
+devuelve el tenant anónimo antes de mirar la cabecera, así que un test de 401 escrito sin
+el fixture **pasa en verde sin comprobar nada**.
 
 Los tests de la API (`tests/integration/test_api_security.py`) construyen el `TestClient`
 **sin** `with`: el context manager dispararía el `lifespan`, que abre el pool y compila el
@@ -295,12 +308,16 @@ Desde la Fase 2 la lógica de los agentes sigue sin saber nada de autenticación
 está en el borde (`main.py` + `service/auth.py` + `service/errors.py`).
 
 - **`service/auth.py`** — API key por tenant contra la tabla `tenants` (solo el SHA-256
-  de la clave). Dos dependencias de FastAPI: `tenant_actual` y `tenant_admin`. `/health`,
+  de la clave). Dos dependencias de FastAPI: `tenant_actual` y `tenant_admin`, que con
+  `AUTH_HABILITADA=false` (el default) devuelven `TENANT_ANONIMO` **sin tocar la base**,
+  para que una instalación abierta funcione aunque la tabla `tenants` no exista. `/health`,
   `/ready` y `/metrics` quedan abiertos y **exentos del rate limiting**: los consulta el
   orquestador, y un 429 ahí se leería como "el pod no responde" y reiniciaría instancias
   sanas en el pico.
 - **El `thread_id` ya no es la cookie.** Se deriva con
-  `sha256(f"{tenant_id}:{conversacion_id}")`. Esto es lo que cierra el IDOR, y la
+  `sha256(f"{tenant_id}:{conversacion_id}")` — también con la autenticación apagada,
+  usando el id fijo del tenant anónimo, así que dos navegadores distintos siguen sin
+  verse el historial. Esto es lo que cierra el IDOR, y la
   distinción importa al tocarlo: la firma HMAC de la cookie impide inventarse
   conversaciones *dentro* del mismo tenant, pero el aislamiento **entre** tenants no
   depende de ella — la misma cookie en otras manos resuelve a otro hilo. Si alguna vez

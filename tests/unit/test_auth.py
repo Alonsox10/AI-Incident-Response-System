@@ -33,6 +33,20 @@ TENANT_B = Tenant(id=2, nombre="globex", rol="user")
 ADMIN = Tenant(id=3, nombre="soporte", rol="admin")
 
 
+@pytest.fixture
+def auth_encendida():
+    """
+    Enciende la autenticación para el test.
+
+    Hace falta explícitamente porque **viene apagada de fábrica**, para que quien clone
+    el repo pueda probar el agente sin crear tenants. Sin esto los tests de credenciales
+    pasarían en verde sin comprobar nada: `tenant_actual` devolvería el tenant anónimo
+    antes de mirar la cabecera.
+    """
+    with patch("service.auth.AUTH_HABILITADA", True):
+        yield
+
+
 # ─── Derivación del thread_id: el arreglo del IDOR ───────────────────────────
 
 def test_la_misma_cookie_en_otro_tenant_apunta_a_otro_hilo():
@@ -111,14 +125,14 @@ def test_el_hash_es_estable_y_no_reversible_a_simple_vista():
 
 # ─── Dependencias de FastAPI ─────────────────────────────────────────────────
 
-async def test_sin_cabecera_no_se_autentica():
+async def test_sin_cabecera_no_se_autentica(auth_encendida):
     from service.auth import tenant_actual
 
     with pytest.raises(NoAutenticado):
         await tenant_actual(x_api_key=None)
 
 
-async def test_una_clave_desconocida_no_se_autentica():
+async def test_una_clave_desconocida_no_se_autentica(auth_encendida):
     from service.auth import tenant_actual
 
     with patch("service.auth._buscar_tenant", AsyncMock(return_value=None)):
@@ -126,7 +140,7 @@ async def test_una_clave_desconocida_no_se_autentica():
             await tenant_actual(x_api_key="iras_inventada")
 
 
-async def test_una_clave_valida_devuelve_el_tenant():
+async def test_una_clave_valida_devuelve_el_tenant(auth_encendida):
     from service.auth import tenant_actual
 
     with patch("service.auth._buscar_tenant", AsyncMock(return_value=TENANT_A)):
@@ -147,7 +161,7 @@ async def test_un_fallo_de_base_no_se_confunde_con_credenciales_invalidas():
             await _buscar_tenant("iras_cualquiera")
 
 
-async def test_un_usuario_normal_no_pasa_por_la_puerta_de_admin():
+async def test_un_usuario_normal_no_pasa_por_la_puerta_de_admin(auth_encendida):
     from service.auth import tenant_admin
 
     with patch("service.auth._buscar_tenant", AsyncMock(return_value=TENANT_A)):
@@ -155,7 +169,7 @@ async def test_un_usuario_normal_no_pasa_por_la_puerta_de_admin():
             await tenant_admin(x_api_key="iras_valida")
 
 
-async def test_un_admin_pasa_por_la_puerta_de_admin():
+async def test_un_admin_pasa_por_la_puerta_de_admin(auth_encendida):
     from service.auth import tenant_admin
 
     with patch("service.auth._buscar_tenant", AsyncMock(return_value=ADMIN)):
@@ -181,3 +195,53 @@ def test_la_cookie_sale_con_httponly_y_samesite():
     assert f"{COOKIE_CONVERSACION}=" in cabecera
     assert "httponly" in cabecera
     assert "samesite=lax" in cabecera
+
+
+# ─── Modo abierto: el default del repo ───────────────────────────────────────
+
+async def test_apagada_no_pide_credenciales():
+    """
+    El objetivo de la bandera: clonar el repo, arrancar y probar con un curl sin
+    cabeceras. `AUTH_HABILITADA` está en False por defecto en la suite porque el
+    conftest no la define, que es el mismo estado que un repo recién clonado.
+    """
+    from service.auth import TENANT_ANONIMO, tenant_actual
+
+    assert await tenant_actual(x_api_key=None) == TENANT_ANONIMO
+
+
+async def test_apagada_la_ingesta_tambien_funciona():
+    """
+    El tenant anónimo tiene rol de admin, así que la ingesta al RAG funciona recién
+    clonado. Es exactamente lo que la bandera concede, y el motivo de que no pueda
+    quedarse apagada en producción.
+    """
+    from service.auth import tenant_admin
+
+    assert (await tenant_admin(x_api_key=None)).es_admin
+
+
+async def test_apagada_no_consulta_la_base():
+    """
+    El atajo va antes de cualquier I/O: una instalación abierta tiene que funcionar
+    aunque la tabla `tenants` no exista todavía.
+    """
+    from service.auth import tenant_actual
+
+    pool = AsyncMock(side_effect=AssertionError("no debería tocar la base"))
+    with patch("service.auth.get_pool", pool):
+        await tenant_actual(x_api_key="iras_una_clave_cualquiera")
+
+
+def test_apagada_las_conversaciones_siguen_separadas():
+    """
+    Lo que la cookie firmada protege aunque no haya autenticación: dos navegadores
+    distintos tienen identificadores distintos, así que el `thread_id` difiere y
+    ninguno ve la conversación del otro.
+    """
+    from service.auth import TENANT_ANONIMO
+
+    uno = thread_id_de(TENANT_ANONIMO, str(uuid.uuid4()))
+    otro = thread_id_de(TENANT_ANONIMO, str(uuid.uuid4()))
+
+    assert uno != otro

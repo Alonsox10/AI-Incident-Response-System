@@ -108,23 +108,36 @@ def limpiar_overrides():
     main.app.dependency_overrides.clear()
 
 
+@pytest.fixture
+def auth_encendida():
+    """
+    Enciende la autenticación, que viene apagada de fábrica.
+
+    Los tests de 401/403 la necesitan: con la bandera en su valor por defecto
+    `tenant_actual` devuelve el tenant anónimo y esos endpoints responden 200, que es
+    justamente el comportamiento que el repo quiere recién clonado.
+    """
+    with patch("service.auth.AUTH_HABILITADA", True):
+        yield
+
+
 # ─── Autenticación exigida ───────────────────────────────────────────────────
 
-def test_sin_credencial_el_endpoint_de_incidentes_responde_401(cliente):
+def test_sin_credencial_el_endpoint_de_incidentes_responde_401(cliente, auth_encendida):
     respuesta = cliente.post("/incident", json={"user_input": "se cayó el servidor"})
 
     assert respuesta.status_code == 401
     assert respuesta.json()["error"]["codigo"] == "no_autenticado"
 
 
-def test_sin_credencial_la_ingesta_de_pdf_responde_401(cliente):
+def test_sin_credencial_la_ingesta_de_pdf_responde_401(cliente, auth_encendida):
     """Este endpoint era público: cualquiera inyectaba contenido en la base del RAG."""
     respuesta = cliente.post("/documents/ingest/pdf", files={"file": ("x.pdf", b"%PDF-1.4", "application/pdf")})
 
     assert respuesta.status_code == 401
 
 
-def test_sin_credencial_el_alta_de_historicos_responde_401(cliente):
+def test_sin_credencial_el_alta_de_historicos_responde_401(cliente, auth_encendida):
     respuesta = cliente.post(
         "/incidents/historical",
         json={"description": "x", "category": "Redes", "priority": "Alta", "resolution": "y"},
@@ -315,3 +328,57 @@ def test_el_presupuesto_de_tiempo_corta_el_workflow(cliente):
     assert respuesta.status_code == 503
     assert respuesta.json()["error"]["codigo"] == "presupuesto_agotado"
     assert respuesta.headers["Retry-After"] == "15"
+
+
+# ─── Modo abierto: el default del repo ───────────────────────────────────────
+
+def test_recien_clonado_el_incidente_funciona_sin_cabeceras(cliente, grafo):
+    """
+    El comportamiento que define el default: ningún `dependency_overrides`, ninguna
+    cabecera, ninguna tabla `tenants` poblada. Quien clone el repo arranca y prueba.
+    """
+    respuesta = cliente.post("/incident", json={"user_input": "se cayó el enlace de la sucursal"})
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["category"] == "Redes"
+
+
+def test_recien_clonado_la_ingesta_de_historicos_funciona_sin_cabeceras(cliente):
+    """
+    El tenant anónimo tiene rol de admin, así que la carga al RAG también está abierta.
+    Es la mitad de B6 que la bandera reabre a cambio de poder probar sin configurar: por
+    eso `AUTH_HABILITADA=false` es un fallo de arranque con `APP_ENTORNO=produccion`.
+    """
+    from unittest.mock import AsyncMock
+
+    with patch("main.get_embedding", AsyncMock(return_value=[0.0] * 1536)), \
+         patch("main.store_incident_embedding", AsyncMock(return_value=7)):
+        respuesta = cliente.post(
+            "/incidents/historical",
+            json={"description": "x", "category": "Redes", "priority": "Alta", "resolution": "y"},
+        )
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["incident_id"] == 7
+
+
+def test_abierta_dos_navegadores_no_se_ven_la_conversacion(cliente, grafo):
+    """
+    Lo que la cookie firmada sigue protegiendo sin autenticación: el `thread_id` se
+    deriva del tenant anónimo **más** el identificador de conversación, así que dos
+    cookies distintas son dos hilos distintos.
+    """
+    from langchain_core.messages import HumanMessage
+
+    from service.auth import TENANT_ANONIMO
+
+    grafo.sembrar(
+        thread_id_de(TENANT_ANONIMO, CONVERSACION),
+        {"messages": [HumanMessage(content="lo que reportó el primer navegador")]},
+    )
+
+    # Otro navegador: misma instalación abierta, otra conversación.
+    otra = "22222222-2222-2222-2222-222222222222"
+    cliente.cookies.set(COOKIE_CONVERSACION, _firmar(otra))
+
+    assert cliente.get("/conversation").json()["messages"] == []

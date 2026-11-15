@@ -21,28 +21,25 @@ Una rampa larga con muchos usuarios se traduce en factura real. Empezar corto.
 Variables:
     LOADTEST_SOLO_SALUD=1   solo golpea /health, sin gastar tokens. Sirve para
                             separar el techo del framework del costo del LLM.
-    API_KEY=...             credencial del tenant. Obligatoria desde la Fase 2:
-                            sin ella /incident responde 401 y la prueba mide
-                            cuántos 401 por segundo aguanta el servicio, que no
-                            es lo que interesa. Se emite con
+    API_KEY=...             credencial del tenant. Solo hace falta si el servidor
+                            corre con AUTH_HABILITADA=true; por defecto la API es
+                            abierta y la prueba funciona sin configurar nada. Se
+                            emite con
                             `python scripts/gestionar_tenants.py crear carga`.
 """
 import os
 import random
-import sys
 
 from locust import HttpUser, between, task
 
 SOLO_SALUD = os.getenv("LOADTEST_SOLO_SALUD", "").lower() in ("1", "true", "yes")
 API_KEY = os.getenv("API_KEY", "")
 
-if not SOLO_SALUD and not API_KEY:
-    sys.exit(
-        "Falta API_KEY. /incident exige autenticación desde la Fase 2, y una corrida "
-        "sin credencial mediría 401 en vez del workflow.
-"
-        "  python scripts/gestionar_tenants.py crear carga"
-    )
+# La cabecera se manda solo si hay clave. Con el servidor abierto sobra, y mandar una
+# vacía sería peor que no mandarla: con AUTH_HABILITADA=true daría 401 en cada petición
+# y la prueba mediría cuántos rechazos por segundo aguanta el servicio.
+CABECERAS = {"X-API-Key": API_KEY} if API_KEY else {}
+
 
 # Incidentes variados para que el clasificador no responda siempre lo mismo y para
 # que el RAG tenga que recuperar de distintas zonas de la base.
@@ -77,7 +74,7 @@ class UsuarioDeIncidentes(HttpUser):
         self.client.post(
             "/incident",
             json={"user_input": random.choice(INCIDENTES)},
-            headers={"X-API-Key": API_KEY},
+            headers=CABECERAS,
             name="POST /incident",
             timeout=120,
         )
